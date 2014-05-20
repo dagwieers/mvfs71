@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1991, 2012. */
+/* * (C) Copyright IBM Corporation 1991, 2013. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -54,6 +54,13 @@
 #define MVFS_IS_LASTCLOSE(cnt)	(cnt == MVFS_LASTCLOSE_COUNT)
 #define MVFS_KEEPHANDLE		0
 
+
+#ifndef MVFS_VNGET_NOWAIT
+/* A version of MVFS_VNGET that does not wait for when it is racing with a
+ * final vnode/mnode deactivation.
+ */
+#define MVFS_VNGET_NOWAIT MVFS_VNGET
+#endif
 
 /* VFS_T to MVFS Mount Information */
 #define VFS_TO_MMI(vfsp) ((struct mfs_mntinfo *)((vfsp)->vfs_data))
@@ -129,6 +136,10 @@
 
 #define MVFS_ESTABLISH_FORK_HANDLER()	TBS_ST_OK
 
+#ifndef MVFS_GET_PROCVIEW
+#define MVFS_GET_PROCVIEW MDKI_GET_U_RDIR
+#endif
+
 #define MVFS_PROCINHERIT_FROM(procp)	mvfs_procinherit_from(procp)
 #define MVFS_GENERIC_PROCINHERIT_FROM
 
@@ -150,13 +161,34 @@
 #define MVFS_ENTER_FS(mth) mth = mvfs_enter_fs()
 #define MVFS_EXIT_FS(mth) mvfs_exit_fs(mth)
 #define MVFS_GET_THREAD(cd) mvfs_enter_fs()
-#define MVFS_MYTHREAD(cd) mvfs_mythread()
+#define MVFS_MYTHREAD(cd) mvfs_mythread(NULL)
 #define CALL_DATA_T CRED_T
 #define MVFS_CD2CRED(cd) (cd)
 #define MVFS_ALLOC_SUBSTITUTE_CRED(CD,CR) (CR)
 #define MVFS_FREE_SUBSTITUTE_CRED(CD)
+#define MVFS_INIT_TEMP_CD(CDP, CR, MTH) (CDP) = (CR)
+#define MVFS_CD_SET_CRED(CDP, CR)       (CDP) = (CR)
+#define MVFS_CD_UNSET_CRED(CDP)
+#define MVFS_SUBSTITUTE_CRED_IS_VALID(CDP)      1
 
 #endif /*MVFS_WRAP_ENTER_EXIT*/
+
+/*
+ * As we move to using a Call Data structure, we need a common way
+ * to declare temporary call data structures on the stack for those
+ * times when a temporary one is needed.  This works for both the
+ * platforms that do wrap enter_fs as well as for those platforms that
+ * have not yet been converted.
+ */
+#ifdef MVFS_WRAP_ENTER_EXIT
+#define MVFS_DECLARE_TEMP_CD(NAME)\
+    CALL_DATA_T NAME;\
+    CALL_DATA_T *NAME ## _p = &NAME
+#else
+#define MVFS_DECLARE_TEMP_CD(NAME)\
+    CALL_DATA_T *NAME ## _p = NULL
+#endif
+
 /*
  * Unless otherwise declared in the port mdep.h file, everybody can
  * wait.  Define MDKI_MYTHREAD_CANTWAIT() as a predicate deciding
@@ -208,8 +240,9 @@
  *					mvfs_proc_t *procp is for an active
  *					proc
  *
- *  MDKI_MYPROCID(&procid):		fill in current procid
- *  MDKI_MYPROCTAG(&proctag, &procid):	fill in current proc tag
+ *  MDKI_MYPROCID(&procid, &threadid):	fill in current procid
+ *  MDKI_MYPROCTAG(&proctag, &procid, &threadid):
+ *                                      fill in proc tag for proc or thread given
  *
  *  MDKI_PROCID(&procid, procp):      fills in procid for given MVFS_PROCESS_T
  *  MDKI_PROCTAG(&proctag, procp):    fills in proctag for given MVFS_PROCESS_T
@@ -236,7 +269,7 @@
  */
 
 #ifndef MDKI_MYPROCTAG
-#define MDKI_MYPROCTAG(tagp, pidp) *(tagp) = *(pidp)
+#define MDKI_MYPROCTAG(tagp, pidp, threadp) *(tagp) = *(pidp)
 #endif
 
 #ifndef MDKI_IS_SOL_EXITPROC
@@ -269,9 +302,9 @@
 
 #define MVFS_REGISTER_VDMINFO(vp) 0
 
-#define MVFS_FLUSH_MAPPINGS(vfsp)	/**/
+#define MVFS_FLUSH_MAPPINGS(vfsp, cd)	/**/
 
-#define MVFS_FLUSH_MAPPINGS_VW(vw)	/**/
+#define MVFS_FLUSH_MAPPINGS_VW(vw, cd)	/**/
 
 #define MVFS_REGISTER_SIDHOST_CREDMAPS(cptr) 0
 
@@ -297,7 +330,7 @@
  * Default variant for MVFS cleartext vnode copy routine used
  * for COW.
  */
-#define MVFS_COPYVP(ovp,nvp,len,cred)	mfs_copyvp(ovp,nvp,len,cred)
+#define MVFS_COPYVP(ovp,nvp,len,cd)	mfs_copyvp(ovp,nvp,len,cd)
 
 /* Default, use mvfs_logfile_printf */
 #define MVFS_PRINTF		mvfs_logfile_printf
@@ -434,6 +467,10 @@
 }
 #endif
 
+
+#ifndef ATRIA_VN_RELE
+#define ATRIA_VN_RELE(vp, cd) VN_RELE(vp)
+#endif
 
 #define REAL_CVN_RELE CVN_RELE
 
@@ -720,6 +757,7 @@ mvfs_strrchr(
   (error) = EACCES
 #endif
 
+/* XXX Solaris and HPUX may want to define this like they do for MVFS_VFID_SET_ERROR */
 #ifndef MVFS_VFID_SET_EXP_ERROR
 #define MVFS_VFID_SET_EXP_ERROR(error, mnp, vp) \
     mvfs_log(MFS_LOG_ERR, \
@@ -915,5 +953,40 @@ extern struct mvfs_slab_list* mvfs_vattr_slabs;
 #define MDKI_ATOMIC_READ_UINT32(addr) (*(addr))
 #endif
 
+/*
+ * On platforms which have delayed I/O, thread structures might be used by
+ * different threads. In this scenario it is necessary to synchronize the
+ * process of snapshothing a thread from a process. To do so, each platform
+ * needs to implement a set of routines which will deal with this. Look at the
+ * mvfs_enter_fs() routine for further details.
+ */
+
+#ifndef MVFS_SIP_T
+#define MVFS_SIP_T
+#define MVFS_INIT_SIP(sip)
+#define MVFS_SET_SIP(sip)
+#define MVFS_CLEAR_SIP(sip)
+#define MVFS_WAIT_SIP(sip)
+#endif
+
+/*
+ * On platforms which have delayed I/O, a system thread might handle a request
+ * which belongs to a different thread. In this case, the thread structure is
+ * cloned from the actual thread to be used by the current thread. The macros
+ * bellow are used to call the routines responsible for allocate and free cloned
+ * thread structures.
+ */
+#ifdef MVFS_HAS_DELAYED_PROCESSING
+#define MVFS_HDP_LOCK_THR(thr_lock,s)       SPLOCK((thr_lock),(s))
+#define MVFS_HDP_UNLOCK_THR(thr_lock,s)     SPUNLOCK((thr_lock),(s))
+#define MVFS_HDP_GET_CLONE_THREAD(thr)      mvfs_hdp_get_clone_thread(thr)
+#define MVFS_HDP_FREE_CLONE_THREAD(thr)     mvfs_hdp_free_clone_thread(thr)
+#else
+#define MVFS_HDP_LOCK_THR(thr_lock,s)
+#define MVFS_HDP_UNLOCK_THR(thr_lock,s)
+#define MVFS_HDP_GET_CLONE_THREAD(thr)      (thr)
+#define MVFS_HDP_FREE_CLONE_THREAD(thr)
+#endif
+
 #endif /* MVFS_SYSTM_H_ */
-/* $Id: fdebbfdf.236411e2.8951.00:01:84:c3:8a:52 $ */
+/* $Id: 042dce64.29da4730.aeac.ce:77:fb:33:04:4b $ */

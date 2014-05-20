@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1990, 2011. */
+/* * (C) Copyright IBM Corporation 1990, 2014. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -64,13 +64,13 @@ char **strp;
     int error = 0;
 
     if (strbuf.l < 0 || strbuf.l > MAXPATHLEN) {
-	*strp = NULL;
-	return(EINVAL);
+        *strp = NULL;
+        return(EINVAL);
     }
 
     if (strbuf.s == NULL || strbuf.l == 0) {	/* No string to copy */
-	*strp = NULL;
-	return(EINVAL);		/* Null strings not allowed */
+        *strp = NULL;
+        return(EINVAL);		/* Null strings not allowed */
     }
 
     str = KMEM_ALLOC(strbuf.l+1, KM_SLEEP);
@@ -78,9 +78,9 @@ char **strp;
 
     if ((error = COPYIN((caddr_t)strbuf.s, (caddr_t)str, strbuf.l)) != 0) 
     {
-	KMEM_FREE(str, strbuf.l+1);
-	*strp = NULL;
-	return(error);
+        KMEM_FREE(str, strbuf.l+1);
+        *strp = NULL;
+        return(error);
     }
 
     str[strbuf.l] = '\0';	/* Force null at end */
@@ -108,13 +108,13 @@ char **strp;
     ** only set *strp (to NULL or str) just before we return.
     */
     if (strbufpn.l < 0 || strbufpn.l > MAXPATHLEN) {
-	*strp = NULL;
-	return(EINVAL);
+        *strp = NULL;
+        return(EINVAL);
     }
 
     if (strbufpn.s == NULL || strbufpn.l == 0) {	/* No string to copy */
-	*strp = NULL;
-	return(EINVAL);		/* Null strings not allowed */
+        *strp = NULL;
+        return(EINVAL);		/* Null strings not allowed */
     }
 
     if ((str = KMEM_ALLOC(strbufpn.l+1, KM_SLEEP)) == NULL) {
@@ -123,9 +123,9 @@ char **strp;
     }
 
     if ((error = COPYIN((caddr_t)strbufpn.s, (caddr_t)str, strbufpn.l)) != 0) {
-	KMEM_FREE(str, strbufpn.l+1);
-	*strp = NULL;
-	return(error);
+        KMEM_FREE(str, strbufpn.l+1);
+        *strp = NULL;
+        return(error);
     }
 
     str[strbufpn.l] = '\0';	/* Force null at end */
@@ -160,15 +160,15 @@ char *s;
     if (s != NULL) {
         len = STRLEN(s);
         if (len+1 > strbuf.m) {	/* Won't fit, return error */
-	    return(EINVAL);
+            return(EINVAL);
         }
         error = COPYOUT((caddr_t)s, (caddr_t)strbuf.s, len+1);
     } else {
-	len = 0;	/* Hold a 0 */
-	error = COPYOUT((caddr_t)&len, (caddr_t)strbuf.s, 1);
+        len = 0;	/* Hold a 0 */
+        error = COPYOUT((caddr_t)&len, (caddr_t)strbuf.s, 1);
     }
     if (!error)
-	strbuf.l = len;
+        strbuf.l = len;
     return(error);
 }
 
@@ -194,19 +194,19 @@ char *s;
     if (s != NULL) {
         len = STRLEN(s);
         if (len+1 > strbufpn.m) {	/* Won't fit, return error */
-	    return(EINVAL);
+            return(EINVAL);
         }
 
         if ((error = COPYOUT((caddr_t)s, (caddr_t)strbufpn.s, len+1)) != 0) 
         {
-	    return(error);
+            return(error);
         }
     } else {
-	len = 0;	/* Hold a 0 */
-	if ((error = COPYOUT((caddr_t)&len, (caddr_t)strbufpn.s, 1)) != 0) 
+        len = 0;	/* Hold a 0 */
+        if ((error = COPYOUT((caddr_t)&len, (caddr_t)strbufpn.s, 1)) != 0) 
         {
-	    return(error);
-	}
+            return(error);
+        }
     }
     strbufpn.l = len;
 
@@ -216,10 +216,12 @@ char *s;
 /* MFS_COPYOUT_VIEWTAG - routine to copyout a view tag name for ioctls */
 
 int
-mfs_copyout_viewtag(err_if_stale, str, vw)
-int err_if_stale;
-mfs_strbufpn_t str;
-VNODE_T *vw;
+mfs_copyout_viewtag(
+    int err_if_stale,
+    mfs_strbufpn_t str,
+    VNODE_T *vw,
+    CALL_DATA_T *cd
+)
 {
     mfs_mnode_t *mnp;
     int id;
@@ -227,8 +229,8 @@ VNODE_T *vw;
     VNODE_T *vwroot;
 
     if (vw == NULL) {
-	error = mfs_copyout_strbufpn(str, NULL);
-	return(error);
+        error = mfs_copyout_strbufpn(str, NULL);
+        return(error);
     }
 
     mnp = VTOM(vw);
@@ -247,18 +249,18 @@ VNODE_T *vw;
 
     id = mnp->mn_view.id;
     if (id == MFS_NULLVID) {
-	if (err_if_stale) {
-	    error = ESTALE;
-	} else {
-	    error = mfs_copyout_strbufpn(str, NULL);
-	}
+        if (err_if_stale) {
+            error = ESTALE;
+        } else {
+            error = mfs_copyout_strbufpn(str, NULL);
+        }
     } else {
         error = mfs_copyout_strbufpn(str,
                                      VTOM(vwroot)->mn_ramdir.ents[id].nm);
     }
     MUNLOCK(mnp);
     MUNLOCK(VTOM(vwroot));
-    VN_RELE(vwroot);
+    ATRIA_VN_RELE(vwroot, cd);
     return(error);
 }
 
@@ -273,76 +275,76 @@ int error;
     mvfs_thread_t *mth;
 
     switch (error) {
-	case EPERM:	return(" - No permission match");
-	case ENOENT:	return(" - No such file or directory");
-	case EINTR:	return(" - Interrupted system call");
-	case EIO:	return(" - I/O error");
-	case ENOMEM:	return(" - Not enough kernel memory");
-	case EACCES:	return(" - Permission denied");
-	case EEXIST:	return(" - File exists");
-	case ENOTDIR:	return(" - Not a directory");
-	case EISDIR:	return(" - Is a directory");
-	case EINVAL:	return(" - Invalid argument");
-	case ENOSPC:	return(" - No space left on device");
-	case EROFS:	return(" - Read-only file system");
+        case EPERM:	return(" - No permission match");
+        case ENOENT:	return(" - No such file or directory");
+        case EINTR:	return(" - Interrupted system call");
+        case EIO:	return(" - I/O error");
+        case ENOMEM:	return(" - Not enough kernel memory");
+        case EACCES:	return(" - Permission denied");
+        case EEXIST:	return(" - File exists");
+        case ENOTDIR:	return(" - Not a directory");
+        case EISDIR:	return(" - Is a directory");
+        case EINVAL:	return(" - Invalid argument");
+        case ENOSPC:	return(" - No space left on device");
+        case EROFS:	return(" - Read-only file system");
 #if ENOTEMPTY != EEXIST
         case ENOTEMPTY: return(" - Directory not empty");
 #endif
-	case ETIMEDOUT: return(" - Connection timed out");
-	case EAGAIN: return(" - Potentially transient error, retry required");
-	case EOPNOTSUPP: return(" - Operation not supported");
-	case ENOSYS: return(" - System operation not available");
-	case ELOOP:	return(" - Too many levels of symbolic links");
-	case ENAMETOOLONG: return(" - File name too long");
-	case ESTALE:	return(" - Stale NFS file handle");
-	case EBADF:	return(" - Bad file descriptor");
-	/*
-	 * ClearCase errors that can't be converted to Unix errors
-	 */
-	case TBS_ST_ERR: return(" - Unspecified ClearCase error");
-	case TBS_ST_NOT_FOUND: return(" - ClearCase object has no data");
-	case TBS_ST_NOT_AN_OBJ: return(" - Not a ClearCase object");
-	case TBS_ST_TIMEOUT: return(" - Communications timeout in ClearCase server");
-	case TBS_ST_DBID_NOT_FOUND: return(" - ClearCase dbid not found");
-	case TBS_ST_NOT_LICENSED: return(" - No license available from ClearCase license manager; use clearlicense to display license usage");
-	case TBS_ST_XREV_COMPAT: return(" - ClearCase cross-rev compatibility problem");
-	case TBS_ST_VIEW_ERR:	return(" - ClearCase view error");
-	case TBS_ST_VOB_ERR:	return(" - ClearCase vob error");
-	case TBS_ST_DB_ERR:	return(" - ClearCase database error");
-	case TBS_ST_MFS_ERR:	return(" - ClearCase MVFS error");
-	case TBS_ST_VIEW_NO_CFS_SET: return(" - No configuration spec set");
-	case TBS_ST_VIEW_STALE_DIR: return(" - stale ClearCase directory");
-	case TBS_ST_VIEW_NO_VER: return(" - No version selected by configuration spec");
-	case TBS_ST_VIEW_CLTXT_ERR: return(" - Problem with cleartext fetch");
-	case TBS_ST_VIEW_UNKNOWN_VOB: return(" - VOB not registered with view"); 
-	case TBS_ST_WRONG_VOB: return(" - VOB mount is stale");
-	case TBS_ST_WRONG_VIEW: return(" - View tag is stale");
-	case TBS_ST_VOB_NEEDS_RECOVERY: return(" - VOB needs recovery");
-	case TBS_ST_DB_AREA_LOCKED: return(" - Lock on VOB database prevents write transactions");
-	case TBS_ST_LICENSE_BUSY: return(" - All licenses in use; use clearlicense to display license usage");
-	case TBS_ST_VIEW_NEEDS_RECOVERY: return(" - View needs recovery");
-	case TBS_ST_VIEW_NEEDS_REFORMAT: return(" - View needs reformat");
-	case TBS_ST_VOB_NEEDS_REFORMAT:	 return(" - VOB needs reformat");
-	case TBS_ST_CONFIG_SPEC_ERR: return(" - Trouble with config spec");
-	case TBS_ST_RGY_DTM_MISMATCH: return(" - Registry changed between operations");
-	case TBS_ST_REPLAY_ALREADY_DONE: return(" - Operation has already been replayed");
-	case TBS_ST_REPLAY_MISSING_INPUT: return(" - Replay is missing required input");
-	case TBS_ST_NOT_A_REGISTRY_SVR: return(" - Specified host is not a registry server");
-	case TBS_ST_NOT_A_LICENSE_SVR: return(" - Specified host is not a license server");
-	case TBS_ST_DB_TIMEOUT:	return(" - Database timed out");
-	case TBS_ST_VIEW_STG_UNAVAIL: return(" - View storage directory or control files unavailable");
-	case TBS_ST_VIEW_CONTACT_ERR: return(" - Unable to contact the view");
+        case ETIMEDOUT: return(" - Connection timed out");
+        case EAGAIN: return(" - Potentially transient error, retry required");
+        case EOPNOTSUPP: return(" - Operation not supported");
+        case ENOSYS: return(" - System operation not available");
+        case ELOOP:	return(" - Too many levels of symbolic links");
+        case ENAMETOOLONG: return(" - File name too long");
+        case ESTALE:	return(" - Stale NFS file handle");
+        case EBADF:	return(" - Bad file descriptor");
+        /*
+         * ClearCase errors that can't be converted to Unix errors
+         */
+        case TBS_ST_ERR: return(" - Unspecified ClearCase error");
+        case TBS_ST_NOT_FOUND: return(" - ClearCase object has no data");
+        case TBS_ST_NOT_AN_OBJ: return(" - Not a ClearCase object");
+        case TBS_ST_TIMEOUT: return(" - Communications timeout in ClearCase server");
+        case TBS_ST_DBID_NOT_FOUND: return(" - ClearCase dbid not found");
+        case TBS_ST_NOT_LICENSED: return(" - No license available from ClearCase license manager; use clearlicense to display license usage");
+        case TBS_ST_XREV_COMPAT: return(" - ClearCase cross-rev compatibility problem");
+        case TBS_ST_VIEW_ERR:	return(" - ClearCase view error");
+        case TBS_ST_VOB_ERR:	return(" - ClearCase vob error");
+        case TBS_ST_DB_ERR:	return(" - ClearCase database error");
+        case TBS_ST_MFS_ERR:	return(" - ClearCase MVFS error");
+        case TBS_ST_VIEW_NO_CFS_SET: return(" - No configuration spec set");
+        case TBS_ST_VIEW_STALE_DIR: return(" - stale ClearCase directory");
+        case TBS_ST_VIEW_NO_VER: return(" - No version selected by configuration spec");
+        case TBS_ST_VIEW_CLTXT_ERR: return(" - Problem with cleartext fetch");
+        case TBS_ST_VIEW_UNKNOWN_VOB: return(" - VOB not registered with view"); 
+        case TBS_ST_WRONG_VOB: return(" - VOB mount is stale");
+        case TBS_ST_WRONG_VIEW: return(" - View tag is stale");
+        case TBS_ST_VOB_NEEDS_RECOVERY: return(" - VOB needs recovery");
+        case TBS_ST_DB_AREA_LOCKED: return(" - Lock on VOB database prevents write transactions");
+        case TBS_ST_LICENSE_BUSY: return(" - All licenses in use; use clearlicense to display license usage");
+        case TBS_ST_VIEW_NEEDS_RECOVERY: return(" - View needs recovery");
+        case TBS_ST_VIEW_NEEDS_REFORMAT: return(" - View needs reformat");
+        case TBS_ST_VOB_NEEDS_REFORMAT:	 return(" - VOB needs reformat");
+        case TBS_ST_CONFIG_SPEC_ERR: return(" - Trouble with config spec");
+        case TBS_ST_RGY_DTM_MISMATCH: return(" - Registry changed between operations");
+        case TBS_ST_REPLAY_ALREADY_DONE: return(" - Operation has already been replayed");
+        case TBS_ST_REPLAY_MISSING_INPUT: return(" - Replay is missing required input");
+        case TBS_ST_NOT_A_REGISTRY_SVR: return(" - Specified host is not a registry server");
+        case TBS_ST_NOT_A_LICENSE_SVR: return(" - Specified host is not a license server");
+        case TBS_ST_DB_TIMEOUT:	return(" - Database timed out");
+        case TBS_ST_VIEW_STG_UNAVAIL: return(" - View storage directory or control files unavailable");
+        case TBS_ST_VIEW_CONTACT_ERR: return(" - Unable to contact the view");
         case TBS_ST_HAS_CHKOUTS: return(" - checkouts prevent the operation");
         case TBS_ST_DENIED: return(" - the requested operation is denied");
         case TBS_ST_OBJ_LOCKED: return(" - object locks prevent the operation completing");
         case TBS_ST_NOT_MASTER: return(" - not the master of the object");
 
-	/* Other errors */
-	default:
-	    mth = mvfs_mythread();
-	    MVFS_SNPRINTF(mth->thr_errstr, sizeof(mth->thr_errstr),
-			  " - error %d", error);
-	    return(mth->thr_errstr);
+        /* Other errors */
+        default:
+            mth = mvfs_mythread(NULL);
+            MVFS_SNPRINTF(mth->thr_errstr, sizeof(mth->thr_errstr),
+                          " - error %d", error);
+            return(mth->thr_errstr);
     }
 }
 
@@ -385,7 +387,7 @@ VNODE_T *vp;
     if (!MFS_VPISMFS(vp)) return(mfs_stringnull);
 
     if ((s = V_TO_MMI(vp)->mmi_mntpath) == NULL) {
-	s = mfs_stringnull;
+        s = mfs_stringnull;
     }
     return(s);
 }
@@ -399,7 +401,7 @@ VNODE_T *vp;
     if (MFS_ISVOB(VTOM(vp)) || MFS_ISVOBRT(VTOM(vp))) {
         return ((u_long)VTOM(vp)->mn_hdr.fid.mf_dbid);
     } else {
-	return ((u_long)VTOM(vp)->mn_hdr.mnum);
+        return ((u_long)VTOM(vp)->mn_hdr.mnum);
     }
 }
 
@@ -457,26 +459,26 @@ size_t n;
     tbs_boolean_t mb_char = FALSE;
 
     if (n != 0) {
-	do {
-	    c1 = *s1++;
-	    c2 = *s2++;
-	    if ('A' <= c1 && c1 <= 'Z' && !mb_char) c1 += 'a'-'A';
-	    if ('A' <= c2 && c2 <= 'Z' && !mb_char) c2 += 'a'-'A';
-	    /* 
-	     * Poor man's handling of multibyte chars without locale info.
-	     * I don't downcase a char after a non-ANSI 0x8n char assuming
-	     * it is part of a 2-byte multibyte sequence.
-	     * This sets a flag for the next char conversion in
-	     * the loop.  Note that we only need one flag, because
-	     * if c2 doesn't match c1 we won't execute the next
-	     * iteration of the loop.
-	     */
-	    mb_char = ((c1 & 0x80) != 0);
-	    if (c1 != c2)
-		return(c1 - c2);
-	    if (c1 == 0)
-		break;
-	} while (--n != 0);
+        do {
+            c1 = *s1++;
+            c2 = *s2++;
+            if ('A' <= c1 && c1 <= 'Z' && !mb_char) c1 += 'a'-'A';
+            if ('A' <= c2 && c2 <= 'Z' && !mb_char) c2 += 'a'-'A';
+            /* 
+             * Poor man's handling of multibyte chars without locale info.
+             * I don't downcase a char after a non-ANSI 0x8n char assuming
+             * it is part of a 2-byte multibyte sequence.
+             * This sets a flag for the next char conversion in
+             * the loop.  Note that we only need one flag, because
+             * if c2 doesn't match c1 we won't execute the next
+             * iteration of the loop.
+             */
+            mb_char = ((c1 & 0x80) != 0);
+            if (c1 != c2)
+                return(c1 - c2);
+            if (c1 == 0)
+                break;
+        } while (--n != 0);
     }
     return(0);
 }
@@ -517,8 +519,8 @@ size_t pn_len;
 
     while ((pn_len != 0) && PN_IS_SEPCHAR(*p)) {
         num_seps++;
-	pn_len --;
-	p--;
+        pn_len --;
+        p--;
     }
 
     return num_seps;
@@ -559,7 +561,7 @@ mfs_uniq_name()
     *s++ = 's';
     *s++ = '_';
     for (i=0; i < 8; i++, uid = uid << 4) {
-	*s++ = mfs_tohex[(uid >> 28) & 0xf];
+        *s++ = mfs_tohex[(uid >> 28) & 0xf];
     }
     *s = '\0';
 
@@ -606,21 +608,21 @@ char **stripped_nm_p;	/* May be NULL if stripped nm not desired */
     strplen = len - mmi->mmi_hmsuffixlen;
 
     if (STRCMP(&nm[strplen], mmi->mmi_hmsuffix) == 0) {
-	if (stripped_nm_p) {
-	    /* Must turn "@@" into ".@@" */
-	    if (strplen == 0) {
-		strpnm = KMEM_ALLOC(2, KM_SLEEP);
-		ASSERT(strpnm);
-		BCOPY(".", strpnm, 2);
-	    } else {
-	        strpnm = KMEM_ALLOC(strplen+1, KM_SLEEP);
-	        ASSERT(strpnm);
-	        BCOPY(nm, strpnm, strplen);
-	        strpnm[strplen] = '\0';
-	    }
-	    *stripped_nm_p = strpnm;
-	}
-	return(1);
+        if (stripped_nm_p) {
+            /* Must turn "@@" into ".@@" */
+            if (strplen == 0) {
+                strpnm = KMEM_ALLOC(2, KM_SLEEP);
+                ASSERT(strpnm);
+                BCOPY(".", strpnm, 2);
+            } else {
+                strpnm = KMEM_ALLOC(strplen+1, KM_SLEEP);
+                ASSERT(strpnm);
+                BCOPY(nm, strpnm, strplen);
+                strpnm[strplen] = '\0';
+            }
+            *stripped_nm_p = strpnm;
+        }
+        return(1);
     }
 
 nothm:    
@@ -653,29 +655,29 @@ char *nm;
 
     if (vrdp->mfs_viewroot_vfsp &&
         VFS_TO_MMI(vrdp->mfs_viewroot_vfsp)->mmi_hmsuffixlen) {
-	hmsuffix = VFS_TO_MMI(vrdp->mfs_viewroot_vfsp)->mmi_hmsuffix;
-	hmvers = VFS_TO_MMI(vrdp->mfs_viewroot_vfsp)->mmi_hmvers_nm;
+        hmsuffix = VFS_TO_MMI(vrdp->mfs_viewroot_vfsp)->mmi_hmsuffix;
+        hmvers = VFS_TO_MMI(vrdp->mfs_viewroot_vfsp)->mmi_hmvers_nm;
     }
   
     /* Special check for just "@@" same as "." */ 
     /* 06/04/93 - DEJ - added check for "^@@" same as "." */
     if (nm[0] == '.' && nm[1] == '\0') {
-	if (hmsuffix && (STRCMP(hmnm, hmsuffix) == 0)) {   /* Just hm suffix */
-	    return(0);
-	}
-	if (hmvers && (STRCMP(hmnm, hmvers) == 0)) {	/* Just "^@@" */
-	    return(0);
-	}
+        if (hmsuffix && (STRCMP(hmnm, hmsuffix) == 0)) {   /* Just hm suffix */
+            return(0);
+        }
+        if (hmvers && (STRCMP(hmnm, hmvers) == 0)) {	/* Just "^@@" */
+            return(0);
+        }
     }
 
     /* Actually compare name and hm suffix */
 
     while (*nm) {
-	if (*nm++ != *hmnm++) return(-1);	/* Not a match */
+        if (*nm++ != *hmnm++) return(-1);	/* Not a match */
     }
     if (*hmnm == '\0') return(0);       /* Exact match */
     if (hmsuffix && (STRCMP(hmnm, hmsuffix) == 0)) {	/* HM form of nm */
-	return(0);
+        return(0);
     }
     return(-1);
 }
@@ -698,10 +700,10 @@ char *s;
     if (mmi->mmi_hmsuffixlen == 0 || mmi->mmi_hmsuffix == NULL) return(0);
     len = STRLEN(s);
     BCOPY(mmi->mmi_hmsuffix, &s[len], 
-			mmi->mmi_hmsuffixlen+1);  /* Incl '\0' */
+                        mmi->mmi_hmsuffixlen+1);  /* Incl '\0' */
     return((int)mmi->mmi_hmsuffixlen);
 }
-	    
+            
 /*
  * Return a string with the history mode suffix appended to
  * the end.  Returned  string is an allocated copy.
@@ -719,8 +721,8 @@ char *nm;
     if (!(vrdp->mfs_viewroot_vfsp)) return(STRDUP(nm));
     mmi = VFS_TO_MMI(vrdp->mfs_viewroot_vfsp);
     if (mmi->mmi_hmsuffixlen == 0 || mmi->mmi_hmsuffix == NULL) {
-	hmnm = STRDUP(nm);	/* No HM suffix, return orig nm duplicate */
-	return(hmnm);
+        hmnm = STRDUP(nm);	/* No HM suffix, return orig nm duplicate */
+        return(hmnm);
     }
 
     len = STRLEN(nm);
@@ -728,7 +730,7 @@ char *nm;
     if (hmnm != NULL) {
         BCOPY(nm, hmnm, len);
         BCOPY(mmi->mmi_hmsuffix, &hmnm[len], 
-			mmi->mmi_hmsuffixlen+1);  /* Incl '\0' */
+                        mmi->mmi_hmsuffixlen+1);  /* Incl '\0' */
     }
     return(hmnm);
 }
@@ -773,19 +775,19 @@ VATTR_T *vap;
     VATTR_SET_MODE_RIGHTS(vap, mnp->mn_vob.attr.fstat.mode);
     switch (VATTR_GET_TYPE(vap)) {
         case VREG: VATTR_SET_MODE_TYPE(vap, S_IFREG); break;
-	case VDIR: VATTR_SET_MODE_TYPE(vap, S_IFDIR); break;
-	case VBLK: VATTR_SET_MODE_TYPE(vap, S_IFBLK); break;
-	case VCHR: VATTR_SET_MODE_TYPE(vap, S_IFCHR); break;
-	case VLNK: VATTR_SET_MODE_TYPE(vap, S_IFLNK); break;
-	case VFIFO: VATTR_SET_MODE_TYPE(vap, S_IFIFO); break;
-	default:
-	    mvfs_log(MFS_LOG_WARN, "unknown type %d, vw=%s vob=%s dbid=0x%x\n", 
-		VATTR_GET_TYPE(vap),
-		mfs_vw2nm(mnp->mn_hdr.viewvp),
-		VFS_TO_MMI(mnp->mn_hdr.vfsp)->mmi_mntpath,
-		mnp->mn_hdr.fid.mf_dbid);
-	    VATTR_SET_MODE_TYPE(vap, S_IFREG); 
-	    break;
+        case VDIR: VATTR_SET_MODE_TYPE(vap, S_IFDIR); break;
+        case VBLK: VATTR_SET_MODE_TYPE(vap, S_IFBLK); break;
+        case VCHR: VATTR_SET_MODE_TYPE(vap, S_IFCHR); break;
+        case VLNK: VATTR_SET_MODE_TYPE(vap, S_IFLNK); break;
+        case VFIFO: VATTR_SET_MODE_TYPE(vap, S_IFIFO); break;
+        default:
+            mvfs_log(MFS_LOG_WARN, "unknown type %d, vw=%s vob=%s dbid=0x%x\n", 
+                VATTR_GET_TYPE(vap),
+                mfs_vw2nm(mnp->mn_hdr.viewvp),
+                VFS_TO_MMI(mnp->mn_hdr.vfsp)->mmi_mntpath,
+                mnp->mn_hdr.fid.mf_dbid);
+            VATTR_SET_MODE_TYPE(vap, S_IFREG); 
+            break;
     }
     MVFS_COPY_UID_TO_VATTR(vap, &mnp->mn_vob.user_id, mnp, &error);
     if (error != 0) {
@@ -805,26 +807,26 @@ VATTR_T *vap;
      * If there are cleartext errors, then ignore the cleartext attrs.
      */
     if (mnp->mn_hdr.realvp && !mnp->mn_vob.cleartext.rwerr) {
-	VATTR_SET_SIZE(vap, VATTR_GET_SIZE(&mnp->mn_vob.cleartext.va)); 
-	/* 
-	 * Use mtime from cleartext ONLY if the file is dirty!
+        VATTR_SET_SIZE(vap, VATTR_GET_SIZE(&mnp->mn_vob.cleartext.va)); 
+        /* 
+         * Use mtime from cleartext ONLY if the file is dirty!
          * (e.g. we wrote the file)
-	 */
-	if (mnp->mn_hdr.clear_dirty) {
-	    VATTR_SET_MTIME_VATTR(vap, &mnp->mn_vob.cleartext.va);
+         */
+        if (mnp->mn_hdr.clear_dirty) {
+            VATTR_SET_MTIME_VATTR(vap, &mnp->mn_vob.cleartext.va);
         } else { 
-	    VATTR_SET_MTIME_TV(vap, &mnp->mn_vob.attr.fstat.mtime);
-	}
+            VATTR_SET_MTIME_TV(vap, &mnp->mn_vob.attr.fstat.mtime);
+        }
     } else {
-  	VATTR_SET_SIZE(vap, mnp->mn_vob.attr.fstat.size); 
-	VATTR_SET_ATIME_TV(vap, &mnp->mn_vob.attr.fstat.atime);
-	VATTR_SET_MTIME_TV(vap, &mnp->mn_vob.attr.fstat.mtime);
+        VATTR_SET_SIZE(vap, mnp->mn_vob.attr.fstat.size); 
+        VATTR_SET_ATIME_TV(vap, &mnp->mn_vob.attr.fstat.atime);
+        VATTR_SET_MTIME_TV(vap, &mnp->mn_vob.attr.fstat.mtime);
     }
    
     VATTR_SET_CTIME_TV(vap, &mnp->mn_vob.attr.fstat.ctime);
     VATTR_SET_RDEV(vap,	0); /* fstat.rdev doesn't exist anymore */
     if (VATTR_GET_TYPE(vap) == VDIR) {
-	VATTR_SET_BLKSIZE(vap, mfs_fsdirblksize);
+        VATTR_SET_BLKSIZE(vap, mfs_fsdirblksize);
     } else {
         VATTR_SET_BLKSIZE(vap, mfs_fsregblksize);
     }
@@ -881,21 +883,21 @@ view_set_attr_t *sattr;
      * aren't going to set (just to be neat an obvious) 
      */
     sattr->mode = (mask & AT_MODE) ? 
-	(u_short)(VATTR_GET_MODE(vap) & VIEW_ATTR_FMODES_MASK) : (u_short) -1;
+        (u_short)(VATTR_GET_MODE(vap) & VIEW_ATTR_FMODES_MASK) : (u_short) -1;
     MVFS_VATTR_TO_SATTR_UID(mask, vap, sattr);
     MVFS_VATTR_TO_SATTR_GID(mask, vap, sattr);
 
     sattr->size = (mask & AT_SIZE) ? VATTR_GET_SIZE(vap) : 0;
 
     if (mask & AT_ATIME) {
-	VATTR_GET_ATIME_TV(vap, &sattr->atime);
+        VATTR_GET_ATIME_TV(vap, &sattr->atime);
     } else {
         sattr->atime.tv_sec = sattr->atime.tv_usec = -1;
     }
     if (mask & AT_MTIME) {
-	VATTR_GET_MTIME_TV(vap, &sattr->mtime);
+        VATTR_GET_MTIME_TV(vap, &sattr->mtime);
     } else {
-	sattr->mtime.tv_sec = sattr->mtime.tv_usec = -1;
+        sattr->mtime.tv_sec = sattr->mtime.tv_usec = -1;
     }
 
     /* 
@@ -944,9 +946,9 @@ VNODE_T *vp;
     /* Log ESTALE fixing */
 
     mvfs_log(MFS_LOG_ESTALE, 
-		"stale vnode vw=%s vob=%s dbid.gen = 0x%x.0x%x\n", 
-		mfs_vp2vw(vp), mfs_vp2dev(vp), mfs_vp2dbid(vp),
-		VTOM(vp)->mn_hdr.fid.mf_gen);
+                "stale vnode vw=%s vob=%s dbid.gen = 0x%x.0x%x\n", 
+                mfs_vp2vw(vp), mfs_vp2dev(vp), mfs_vp2dbid(vp),
+                VTOM(vp)->mn_hdr.fid.mf_gen);
 }
 
 /* MFS_SVRDESTROY - free up resources in a svr struct */
@@ -990,6 +992,7 @@ mvfs_logfile_set(
     int error;
     CLR_VNODE_T *newvp;
     char *lfname;
+    MVFS_DECLARE_TEMP_CD(temp_cd);
     void *tmp_printf_filp = NULL;
 
     /* Get copy early */
@@ -999,41 +1002,46 @@ mvfs_logfile_set(
 
     MVFS_LOCK(&mvfs_printf_lock);
     error = LOOKUP_FOR_IOCTL(lfname, UIO_SYSSPACE, FOLLOW_LINK,
-			     0, NULL, &newvp, cd);
+                             0, NULL, &newvp, cd);
     if (error == 0) {
-	if (MFS_VPISMFS(MVFS_CVP_TO_VP(newvp))) {
-	    error = EINVAL;
-	} else if (!MVFS_ISVTYPE(MVFS_CVP_TO_VP(newvp), VREG)) {
-	    error = EISDIR;
-	} else
-	    error = MVOP_OPEN_KERNEL(&newvp, FWRITE, MVFS_CD2CRED(cd),
+        if (MFS_VPISMFS(MVFS_CVP_TO_VP(newvp))) {
+            error = EINVAL;
+        } else if (!MVFS_ISVTYPE(MVFS_CVP_TO_VP(newvp), VREG)) {
+            error = EISDIR;
+        } else
+            error = MVOP_OPEN_KERNEL(&newvp, FWRITE, cd,
                                      &tmp_printf_filp);
 
-	if (error == 0) {
-	    if (mvfs_printf_logvp != 0) {
-		MVOP_FSYNC_KERNEL(MVFS_CVP_TO_VP(mvfs_printf_logvp),
-                                  FLAG_DATASYNC, MVFS_CD2CRED(cd), printf_filp);
-		(void) MVOP_CLOSE_KERNEL(mvfs_printf_logvp, FWRITE,
+        if (error == 0) {
+            if (mvfs_printf_logvp != 0) {
+                /* Hybrid call_data to use saved logfile cred with thread
+                 * info from the call_data which was passed in. 
+                 */
+                MVFS_INIT_TEMP_CD(temp_cd_p, printf_log_cred,
+                                   MVFS_CD2THREAD(cd));
+                MVOP_FSYNC_KERNEL(MVFS_CVP_TO_VP(mvfs_printf_logvp),
+                                  FLAG_DATASYNC, temp_cd_p, printf_filp);
+                (void) MVOP_CLOSE_KERNEL(mvfs_printf_logvp, FWRITE,
                                          MVFS_LASTCLOSE_COUNT,
-                                         (MOFFSET_T)0, printf_log_cred,
+                                         (MOFFSET_T)0, temp_cd_p,
                                          printf_filp);
-		CVN_RELE(mvfs_printf_logvp);
-		MDKI_CRFREE(printf_log_cred);
-	    }
-	    mvfs_printf_logvp = newvp;
+                CVN_RELE(mvfs_printf_logvp, temp_cd_p);
+                MDKI_CRFREE(printf_log_cred);
+            }
+            mvfs_printf_logvp = newvp;
             printf_filp = tmp_printf_filp;
-	    if (printf_logfilename != NULL) {
-		PN_STRFREE(printf_logfilename); /* dump old one, if present */
-	    }
-	    /* Use our copy */
-	    printf_logfilename = lfname;
-	    /* and don't free it... */
-	    lfname = NULL;
-	    printf_loglen = STRLEN(logfile)+1;
-	    printf_log_cred = MDKI_CRDUP(MVFS_CD2CRED(cd)); /* take private copy */
-	} else {
-	    CVN_RELE(newvp);
-	}
+            if (printf_logfilename != NULL) {
+                PN_STRFREE(printf_logfilename); /* dump old one, if present */
+            }
+            /* Use our copy */
+            printf_logfilename = lfname;
+            /* and don't free it... */
+            lfname = NULL;
+            printf_loglen = STRLEN(logfile)+1;
+            printf_log_cred = MDKI_CRDUP(MVFS_CD2CRED(cd)); /* take private copy */
+        } else {
+            CVN_RELE(newvp, cd);
+        }
     }
 
     MVFS_UNLOCK(&mvfs_printf_lock);
@@ -1043,12 +1051,13 @@ mvfs_logfile_set(
 }
 
 void
-mvfs_logfile_close()
+mvfs_logfile_close(CALL_DATA_T *cd)
 {
     CLR_VNODE_T *tmp_printf_logvp;
-    CRED_T * tmp_printf_log_cred;
+    CRED_T *tmp_printf_log_cred;
     void *tmp_printf_filp;
     char *tmp_printf_logfilename;
+    MVFS_DECLARE_TEMP_CD(temp_cd);
 
     MVFS_LOCK(&mvfs_printf_lock);
     
@@ -1059,25 +1068,28 @@ mvfs_logfile_close()
         tmp_printf_filp = printf_filp;
         tmp_printf_logfilename = printf_logfilename;
         /** Null out the parameters.  This will prevent further logging */
-	mvfs_printf_logvp = NULL;
+        mvfs_printf_logvp = NULL;
         printf_filp = NULL;
-	printf_logfilename = NULL;
-	printf_loglen = 0;
-	printf_log_cred = NULL;
+        printf_logfilename = NULL;
+        printf_loglen = 0;
+        printf_log_cred = NULL;
         /* Release the lock */
         MVFS_UNLOCK(&mvfs_printf_lock);
 
         /* Now clean up outside the lock.  This will prevent recursive
          * lock panics if anyone adds logging code to any of the following
-         * calls.
+         * calls.   Hybrid call_data uses saved logfile cred + thread
+         * info from the call_data which was passed in.
          */
+        MVFS_INIT_TEMP_CD(temp_cd_p, tmp_printf_log_cred, MVFS_MYTHREAD(cd));
 	MVOP_FSYNC_KERNEL(MVFS_CVP_TO_VP(tmp_printf_logvp),
-                          FLAG_DATASYNC, tmp_printf_log_cred, tmp_printf_filp);
-	(void) MVOP_CLOSE_KERNEL(tmp_printf_logvp, FWRITE, MVFS_LASTCLOSE_COUNT,
-                          (MOFFSET_T)0, tmp_printf_log_cred, tmp_printf_filp);
-	REAL_CVN_RELE(tmp_printf_logvp); /* don't do logging VN_RELE()! */
-	if (tmp_printf_logfilename != NULL)
-	  PN_STRFREE(tmp_printf_logfilename);
+                          FLAG_DATASYNC, temp_cd_p, tmp_printf_filp);
+	(void)MVOP_CLOSE_KERNEL(tmp_printf_logvp, FWRITE, MVFS_LASTCLOSE_COUNT,
+                                (MOFFSET_T)0, temp_cd_p, tmp_printf_filp);
+	REAL_CVN_RELE(tmp_printf_logvp, temp_cd_p); /* don't do logging VN_RELE()! */
+	if (tmp_printf_logfilename != NULL) {
+            PN_STRFREE(tmp_printf_logfilename);
+        }
 	MDKI_CRFREE(tmp_printf_log_cred);
         return;
     }
@@ -1095,56 +1107,66 @@ register size_t *len;				/* in/out */
     MVFS_LOCK(&mvfs_printf_lock);
     *len = KS_MIN(*len,printf_loglen);
     if (*len == 0)
-	error = 0;
+        error = 0;
     else
-	error = COPYOUT(printf_logfilename, pn, *len);
+        error = COPYOUT(printf_logfilename, pn, *len);
     MVFS_UNLOCK(&mvfs_printf_lock);
     return error;
 }
 
 void
-mvfs_logfile_putstr(str, len, nofileoffset)
-A_CONST char *str;
-u_int len;
-int nofileoffset;
+mvfs_logfile_putstr(
+    A_CONST char *str,
+    u_int len,
+    int nofileoffset
+)
 {
     struct uio uios;
     IOVEC_T iov;
     struct uio *uiop;
     VATTR_T *vap = NULL;
     int error = 0;
+    MVFS_DECLARE_TEMP_CD(cd);
 
     if (mvfs_printf_logvp == NULL) {
-	/* If not going to file, skip first "nofileoffset" bytes */
+        /* If not going to file, skip first "nofileoffset" bytes */
         /*
          * also we don't need our own printf lock if going to console
          * rather than to log file
          */
         MVFS_REAL_PRINTF("%s", str + nofileoffset);
-	return;
+        return;
     }
 
     if ((vap = MVFS_VATTR_ALLOC()) == NULL) {
         MVFS_REAL_PRINTF("mvfs_logfile_putstr: failed to allocate a struct "
                          "vattr for use by subsequent code.");
-	return;
+        return;
     }
 
     MVFS_LOCK(&mvfs_printf_lock);
+    
+    /* Leave the thread pointer NULL here.  Neither MVOP_GETATTR or
+    ** MVOP_WRITE_KERNEL use the thread pointer on either Windows or Linux.
+    ** This avoids a call to mvfs_mythread() which caused a deadlock if we are
+    ** logging while holding the proc lock, which we do in a number of cases.
+    */
+    MVFS_INIT_TEMP_CD(cd_p, printf_log_cred, NULL);
+
     uiop = &uios;
     uios.uio_iov = &iov;
 
     VATTR_NULL(vap);
     VATTR_SET_MASK(vap, AT_SIZE);
     error = MVOP_GETATTR(MVFS_CVP_TO_VP(mvfs_printf_logvp),
-                         mvfs_printf_logvp, vap, 0, printf_log_cred);
+                         mvfs_printf_logvp, vap, 0, cd_p);
     if (error) {
         goto cleanup;
     }
     mfs_uioset(&uios, (caddr_t) str, len, vap->va_size, UIO_SYSSPACE);
 
     MVOP_RWWRLOCK(mvfs_printf_logvp, NULL);
-    (void) MVOP_WRITE_KERNEL(mvfs_printf_logvp, &uios, 0, NULL, printf_log_cred,
+    (void) MVOP_WRITE_KERNEL(mvfs_printf_logvp, &uios, 0, NULL, cd_p,
                              printf_filp);
     MVOP_RWWRUNLOCK(mvfs_printf_logvp, NULL);
 
@@ -1180,10 +1202,10 @@ mvfs_vlog(
 )
 {
     if (MVFS_PRI_LOGGED(pri)) {
-	MVFS_VPRINTF_3(pri, mvfs_sevmsg[pri], NULL, fmt, ap);
-	if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
-	    MDKI_USECDELAY(mvfs_cnprint_delay);
-	}
+        MVFS_VPRINTF_3(pri, mvfs_sevmsg[pri], NULL, fmt, ap);
+        if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
+            MDKI_USECDELAY(mvfs_cnprint_delay);
+        }
     }
 }
 
@@ -1197,15 +1219,15 @@ mvfs_logperr(
 {
     va_list ap;
     if ((err) != 0 && MVFS_PRI_LOGGED(pri) &&
-	(((err) != EINTR && (err) != ESTALE) ||
+        (((err) != EINTR && (err) != ESTALE) ||
          MVFS_PRI_LOGGED(MFS_LOG_ESTALE)))
     {
-	va_start(ap, fmt);
-	MVFS_VPRINTF_3(pri, mvfs_sevmsg[pri], mfs_strerr(err), fmt, ap);
-	va_end(ap);
-	if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
-	    MDKI_USECDELAY(mvfs_cnprint_delay);
-	}
+        va_start(ap, fmt);
+        MVFS_VPRINTF_3(pri, mvfs_sevmsg[pri], mfs_strerr(err), fmt, ap);
+        va_end(ap);
+        if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
+            MDKI_USECDELAY(mvfs_cnprint_delay);
+        }
     }
 }
 
@@ -1219,12 +1241,12 @@ mvfs_log_sevpri(
 {
     va_list ap;
     if (MVFS_PRI_LOGGED(pri)) {
-	va_start(ap, fmt);
-	MVFS_VPRINTF_3(pri, mvfs_sevmsg[sev], NULL, fmt, ap);
-	va_end(ap);
-	if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
-	    MDKI_USECDELAY(mvfs_cnprint_delay);
-	}
+        va_start(ap, fmt);
+        MVFS_VPRINTF_3(pri, mvfs_sevmsg[sev], NULL, fmt, ap);
+        va_end(ap);
+        if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
+            MDKI_USECDELAY(mvfs_cnprint_delay);
+        }
     }
 }
 
@@ -1239,13 +1261,13 @@ mvfs_logperr_sevpri(
 {
     va_list ap;
     if ((err) != 0 && MVFS_PRI_LOGGED(pri) &&
-	((err) != EINTR && ((err) != ESTALE || MVFS_PRI_LOGGED(MFS_LOG_ESTALE)))) {
-	va_start(ap, fmt);
-	MVFS_VPRINTF_3(pri, mvfs_sevmsg[sev], mfs_strerr(err), fmt, ap);
-	va_end(ap);
-	if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
-	    MDKI_USECDELAY(mvfs_cnprint_delay);
-	}
+        ((err) != EINTR && ((err) != ESTALE || MVFS_PRI_LOGGED(MFS_LOG_ESTALE)))) {
+        va_start(ap, fmt);
+        MVFS_VPRINTF_3(pri, mvfs_sevmsg[sev], mfs_strerr(err), fmt, ap);
+        va_end(ap);
+        if (!mvfs_printf_logvp && pri >= MFS_LOG_DEBUG) {
+            MDKI_USECDELAY(mvfs_cnprint_delay);
+        }
     }
 }
 
@@ -1291,19 +1313,19 @@ mvfs_logfile_vprintf_3(pri, msg1, msg2, fmt, ap)
     len = STARTOFFSET;
 
     if (msg1) {
-	STRNCPY(printstr+len, msg1, sizeof(printstr)-len-1);
-	len = STRLEN(printstr);
+        STRNCPY(printstr+len, msg1, sizeof(printstr)-len-1);
+        len = STRLEN(printstr);
     }
     if (len+1 < sizeof(printstr)) {
-	MVFS_VSNPRINTF(printstr+len, sizeof(printstr)-len-1, fmt, ap);
-	if (msg2 != NULL) {
-	    len += STRLEN(printstr+len);
-	    if (len+1 < sizeof(printstr))
-		STRNCPY(printstr+len, msg2, sizeof(printstr)-len-1);
-	    len += STRLEN(printstr+len);
-	    if (len+1 < sizeof(printstr)) /* XXX */
-		STRCPY(printstr+len, "\n");
-	}
+        MVFS_VSNPRINTF(printstr+len, sizeof(printstr)-len-1, fmt, ap);
+        if (msg2 != NULL) {
+            len += STRLEN(printstr+len);
+            if (len+1 < sizeof(printstr))
+                STRNCPY(printstr+len, msg2, sizeof(printstr)-len-1);
+            len += STRLEN(printstr+len);
+            if (len+1 < sizeof(printstr)) /* XXX */
+                STRCPY(printstr+len, "\n");
+        }
     }
     mvfs_logfile_putstr(printstr, STRLEN(printstr), STARTOFFSET);
     MVFS_UNLOCK(&mvfs_printstr_lock);
@@ -1489,7 +1511,7 @@ mvfs_ensure_power2(int n)
 
     size = 1;
     while ((n = n/2) != 0)
-	size *= 2;
+        size *= 2;
     return size;
 }
 
@@ -1532,4 +1554,4 @@ mvfs_bumptime(
 
     return;
 }
-static const char vnode_verid_mvfs_utils_c[] = "$Id:  bfa0e814.737211e1.90e6.00:01:83:0a:3b:75 $";
+static const char vnode_verid_mvfs_utils_c[] = "$Id:  44bd648e.90f94dfa.b1a9.7a:5f:1c:30:aa:4b $";

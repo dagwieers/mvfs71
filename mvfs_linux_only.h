@@ -1,7 +1,7 @@
 #ifndef MVFS_LINUX_ONLY_H_
 #define MVFS_LINUX_ONLY_H_
 /*
- * Copyright (C) 1999, 2012 IBM Corporation.
+ * Copyright (C) 1999, 2013 IBM Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -77,22 +77,27 @@
 #define SET_VFSTOSB(vfsp, value) do {(vfsp)->vfs_sb = (caddr_t)(value);} while(0)
 
 /* There are different constants for ngroups, so let's define our own. */
-#define LINUX_NGROUPS NGROUPS_SMALL
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 /* We are not allowed to access cred struct members directly */
 # define LINUX_TASK_NGROUPS(task) ((task)->group_info->ngroups)
-# define LINUX_TASK_GROUPS(task) ((task)->group_info->blocks[0])
+/* You access the gids with the GROUP_AT macro. */
+# define LINUX_TASK_GROUPS(task) ((task)->group_info)
+#else
+# define LINUX_TASK_NGROUPS(task) ((task)->cred->group_info->ngroups)
+/* You access the gids with the GROUP_AT macro. */
+# define LINUX_TASK_GROUPS(task) ((task)->cred->group_info)
+
 #endif /*  LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32) */
 
-typedef struct {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+typedef struct {
     uid_t old_fsuid;
     uid_t old_fsgid;
     struct group_info *saved_group_info;
-#else
-    const struct cred *saved_cred;
-#endif
 } vnlayer_fsuid_save_struct_t, *vnlayer_fsuid_save_t;
+#else
+typedef const SYS_CRED_T *vnlayer_fsuid_save_t;
+#endif
 
 extern mdki_boolean_t
 vnlayer_fsuid_save(
@@ -1054,4 +1059,4 @@ typedef struct mdki_vop_close_ctx {
 #define STACK_CHECK()
 
 #endif /* MVFS_LINUX_ONLY_H_ */
-/* $Id: 0e758277.e6e311e1.8799.00:01:84:c3:8a:52 $ */
+/* $Id: 7378f0f0.ff6b11e2.8ed0.00:01:83:09:28:25 $ */

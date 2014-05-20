@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1998, 2010. */
+/* * (C) Copyright IBM Corporation 1998, 2013. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -533,6 +533,7 @@ struct mfs_auditrec_32 {
 
 struct mvfs_viewstats_32 {
     struct mfs_strbuf_32 viewtag;
+    struct mfs_strbuf_32 mvfs_pview_stat_enabled;
     struct mvfs_statbufs_32 stats;
 };
 
@@ -607,4 +608,4 @@ extern void mvfs_vobinfo_to_mvfs_vobinfo_32(struct mvfs_vobinfo *vbl, struct mvf
 #endif /* ATRIA_LP64 || ATRIA_LLP64 */
 
 #endif /* MVFS_TRANSTYPE_H_ */
-/* $Id: 2f93a827.a23a11df.8bc7.00:01:84:7a:f2:e4 $ */
+/* $Id: e40193f5.c97611e2.90c7.00:01:83:09:28:25 $ */

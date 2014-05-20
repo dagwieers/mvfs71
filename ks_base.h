@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1990, 2007. */
+/* * (C) Copyright IBM Corporation 1990, 2013. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -428,6 +428,7 @@ typedef ks_int64_t ks_off64_t;
 typedef KS_CHAR ks_name_t[KS_MAX_NAME_LEN+1];
 
 #define KS_MAX_PNAME_LEN 1023
+#define KS_MAX_PNAME_FMT "%1023s"
 #if !defined(RPC) || defined(RPC_HDR)
 typedef KS_CHAR ks_pname_t[KS_MAX_PNAME_LEN+1];
 typedef KS_CHAR ks_canon_pname_t[KS_MAX_PNAME_LEN+1];
@@ -574,6 +575,7 @@ typedef struct credutl_sid_s {
                                       sizeof(sid_p->type))
 
 #define CREDUTL_MAX_SID_STR 100
+#define CREDUTL_MAX_SID_FMT "%100s"
 
 typedef char credutl_sid_str_t[CREDUTL_MAX_SID_STR + 1];
 
@@ -627,4 +629,4 @@ typedef enum ks_addrfamily {
 #define KS_NUM_ADDRESS_FAMILIES 2
 
 #endif /* _KS_BASE_H_ */
-/* $Id: a9a0f7ee.9c1c11dd.9a62.00:01:83:29:c0:fc $ */
+/* $Id: a2c343b4.7e2711e3.8c85.00:1a:64:79:4b:40 $ */

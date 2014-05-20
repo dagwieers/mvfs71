@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1999, 2012 IBM Corporation.
+ * Copyright (C) 1999, 2014 IBM Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -168,7 +168,10 @@ mvop_linux_lookupvp(
     struct nameidata *nd
 )
 {
-    char   *pn;
+#if (defined RATL_REDHAT && RATL_VENDOR_VER >= 605)
+    struct filename *fn = NULL;
+#endif
+    const char *pn = NULL;
     DENT_T *found = NULL;
     STACK_CHECK_DECL()
 
@@ -183,11 +186,22 @@ mvop_linux_lookupvp(
     *cvpp = NULL;
 
     if (segflg == UIO_USERSPACE) {
+#if (defined RATL_REDHAT && RATL_VENDOR_VER >= 605)
+        fn = getname(path);
+        if (IS_ERR(fn)) {
+            error = vnlayer_errno_linux_to_unix(PTR_ERR(fn));
+            fn = NULL;
+        } else {
+            pn = fn->name;
+        }
+#else
         pn = getname(path);
         if (IS_ERR(pn)) {
                 error = vnlayer_errno_linux_to_unix(PTR_ERR(pn));
                 pn = NULL;
-        } else {
+        }
+#endif
+        if (pn != NULL) {
             MDKI_TRACE(TRACE_USERLOOKUP, "user lookup: pn=%s\n", pn);
         }
     } else {
@@ -332,9 +346,16 @@ mvop_linux_lookupvp(
                        pn, error);
         }
     }
+#if (defined RATL_REDHAT && RATL_VENDOR_VER >= 605)
+    if ((segflg == UIO_USERSPACE) && (fn != NULL)) {
+        /* after this point, pn is no longer valid */
+        putname(fn);
+    }
+#else
     if ((segflg == UIO_USERSPACE) && (pn != NULL)) {
         putname(pn);
     }
+#endif
     if (nd != myndp) {
         /* If they're not equal, then myndp can't be NULL since we only
         ** allocate it if nd == NULL, and if there was an error during the
@@ -1688,13 +1709,15 @@ mvop_linux_close_kernel(
         */
         MDKI_VFS_LOG(VFS_LOG_ERR,
                      "%s: Locks should be gone, continuing anyway. fp=%p vp=%p "
-                     "cnt=%d fcnt=%ld po=%p pid=%d tgid=%d fl=%p flo=%p\n",
+                     "cnt=%d fcnt=%ld po=%p pid=%d tgid=%d fl=%p flo=%p"
+                     "lock=%p\n",
                      __func__, fp, vp, count, (long) F_COUNT(fp),
                      current->files, current->pid, current->tgid,
                      fp->f_dentry->d_inode->i_flock->fl_file,
-                     fp->f_dentry->d_inode->i_flock->fl_owner);
-        /* Prevent the panic, although this will leak memory. */
-        fp->f_dentry->d_inode->i_flock = NULL;
+                     fp->f_dentry->d_inode->i_flock->fl_owner,
+                     fp->f_dentry->d_inode->i_flock);
+        /* We must have raced with someone.  Remove the lock now. */
+        locks_remove_posix(fp, fp->f_dentry->d_inode->i_flock->fl_owner);
     }
 #endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
@@ -3292,4 +3315,4 @@ VFS_T vnlayer_cltxt_vfs = {
     .vfs_op =     &vnlayer_linux_cltxt_vfsop
     /* initialize vfs_sb at runtime */
 };
-static const char vnode_verid_mvfs_linux_mvops_c[] = "$Id:  d1d26702.4af411e2.9c21.44:37:e6:71:2b:ed $";
+static const char vnode_verid_mvfs_linux_mvops_c[] = "$Id:  99239663.8d0011e3.9d01.00:11:25:27:c4:b4 $";

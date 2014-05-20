@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1991, 2012. */
+/* * (C) Copyright IBM Corporation 1991, 2013. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -1580,7 +1580,8 @@ typedef struct mvfs_cache_sizes {
 #define MVFS_SETCACHE_OTHERHASHTAB_SZ	17 /* mount-time only */
 #define MVFS_SETCACHE_VOBFREEHASHTAB_SZ 18 /* mount-time only */
 #define MVFS_SETCACHE_CTXT_ATIME_REFRESH 19
-#define MVFS_SETCACHE_COUNT             20
+#define MVFS_SETCACHE_EXPECTED_ZONE_COUNT 20
+#define MVFS_SETCACHE_COUNT             21
 /* see also SET_CACHE_ENB command above for cache enable state */
 
 /*
@@ -1664,6 +1665,9 @@ typedef struct mvfs_cache_sizes {
 
 struct mvfs_viewstats {
 	mfs_strbuf_t	viewtag;	/* (IN) view tag */
+        mfs_strbuf_t    mvfs_pview_stat_enabled;
+                                        /* (OUT) status of per-view
+                                           statistics collection */
 	mvfs_statbufs_t	stats;		/* (OUT) statistics pointers */
 };
 typedef struct mvfs_viewstats mvfs_viewstats_t;
@@ -1881,13 +1885,17 @@ typedef struct mvfs_mkviewtag_info_ex mvfs_mkviewtag_info_ex_t;
  *     }
  * }
  */
+
+#define MVFS_CMD_ENABLE_PVIEW_STATS 63
+#define MVFS_CMD_DISABLE_PVIEW_STATS 64
+
 #define MVFS_FILEUTL_ABSOBJPN(AP, AOP, SZAOP, RC) *(AOP) = NULLC, (RC) = 0
 
 /*
  * Used for validation in mfs_vnodeops.c
  */
 #define MVFS_CMD_MIN 1
-#define MVFS_CMD_MAX 62
+#define MVFS_CMD_MAX 64
 
 #endif /* MFSMIOCTL_H_ */
-/* $Id: 5fe2ec9e.d67011e1.9c09.00:01:84:c3:8a:52 $ */
+/* $Id: e1e192ed.c97611e2.90c7.00:01:83:09:28:25 $ */

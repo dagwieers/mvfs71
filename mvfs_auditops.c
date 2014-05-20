@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1991, 2013. */
+/* * (C) Copyright IBM Corporation 1991, 2014. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -38,41 +38,48 @@ STATIC MVFS_NOINLINE mfs_auditfile_t *
 mfs_afpnew(
     char *pname,
     char *upname,
-    CLR_VNODE_T *cvp
+    CLR_VNODE_T *cvp,
+    CALL_DATA_T *cd
 );
 STATIC void MVFS_NOINLINE
 mfs_afpdestroy(
-    mfs_auditfile_t *afp
+    mfs_auditfile_t *afp,
+    mvfs_thread_t *mth
 );
 STATIC MVFS_NOINLINE struct mfs_auditfile *
 mfs_afpget(
     char *pname,
     char *upname,
-    CLR_VNODE_T *cvp
+    CLR_VNODE_T *cvp,
+    CALL_DATA_T *cd
 );
-STATIC void mfs_afp_obsolete(P1(mvfs_thread_t *mth));
-STATIC int mfs_cmpdirrec(P1(mfs_auditrec_t *rp)
-			 PN(u_int kind)
-			 PN(VNODE_T *dvp)
-			 PN(char *nm)
-			 PN(size_t nmlen)
-			 PN(VNODE_T *vp)
-			 PN(VATTR_T *vap));
-STATIC int mfs_cmprwrec(P1(mfs_auditrec_t *rp)
-			PN(u_int kind)
-			PN(VNODE_T *vp)
-			PN(VATTR_T *vap));
-STATIC int mfs_cmpviewrec(P1(mfs_auditrec_t *rp)
-			  PN(VNODE_T *vp));
-STATIC int mfs_isdupl(P1(mfs_auditfile_t *afp)
-		      PN(u_int kind)
-		      PN(VNODE_T *dvp)
-		      PN(char *nm)
-		      PN(size_t nmlen)
-		      PN(VNODE_T *vp)
-		      PN(VATTR_T *vap));
-STATIC void mvfs_auditwrite_int(P1(mfs_auditfile_t *afp)
-			       PN(mvfs_thread_t *mth));
+STATIC void mfs_afp_obsolete(mvfs_thread_t *mth);
+STATIC int mfs_cmpdirrec(mfs_auditrec_t *rp,
+                         u_int kind,
+                         VNODE_T *dvp,
+                         char *nm,
+                         size_t nmlen,
+                         VNODE_T *vp,
+                         struct timeval *dtm);
+STATIC int mfs_cmprwrec(mfs_auditrec_t *rp,
+                        u_int kind,
+                        VNODE_T *vp,
+                        struct timeval *dtm);
+STATIC int mfs_cmpviewrec(mfs_auditrec_t *rp,
+                          VNODE_T *vp);
+STATIC int mfs_isdupl(mfs_auditfile_t *afp,
+                      u_int kind,
+                      VNODE_T *dvp,
+                      char *nm,
+                      size_t nmlen,
+                      VNODE_T *vp,
+                      struct timeval *dtm);
+STATIC void mvfs_auditwrite_int(mfs_auditfile_t *afp,
+                                mvfs_thread_t *mth);
+STATIC MVFS_NOINLINE void mvfs_audit_get_mtime(VNODE_T *vp,
+                      struct timeval *mtime_p,
+                      mvfs_thread_t *mth,
+                      CALL_DATA_T *cd);
 
 /*
  * Initialize the structures for managing the audit subsystem
@@ -121,7 +128,8 @@ STATIC MVFS_NOINLINE mfs_auditfile_t *
 mfs_afpnew(
     char *pname,
     char *upname,
-    CLR_VNODE_T *cvp
+    CLR_VNODE_T *cvp,
+    CALL_DATA_T *cd
 )
 {
     mvfs_audit_data_t *madp = MDKI_AUDIT_GET_DATAP();
@@ -131,25 +139,27 @@ mfs_afpnew(
 
     afp = (mfs_auditfile_t *)KMEM_ALLOC(sizeof(mfs_auditfile_t), KM_NOSLEEP);
     if (afp != NULL) {
-	BZERO(afp, sizeof(*afp));
+        BZERO(afp, sizeof(*afp));
         afp->buf = (mfs_auditrec_t *)KMEM_ALLOC(mvfs_auditbufsiz, KM_NOSLEEP);
         if (afp->buf == NULL) goto errout;
-	afp->buflen = mvfs_auditbufsiz;
-	afp->path = STRDUP(pname);
-	if (afp->path == NULL) goto errout;
-	afp->upath = STRDUP(upname);
-	if (afp->upath == NULL) goto errout;
+        afp->buflen = mvfs_auditbufsiz;
+        afp->path = STRDUP(pname);
+        if (afp->path == NULL) goto errout;
+        afp->upath = STRDUP(upname);
+        if (afp->upath == NULL) goto errout;
 
-	/* Save credentials of "creating" process.  These are used
-	   for all writes to the file.  Prevents trojan horses from
-	   using a filename and then executing a setuid program
-	   which has greater rights. */
+        /* Save credentials of "creating" process.  These are used
+           for all writes to the file.  Prevents trojan horses from
+           using a filename and then executing a setuid program
+           which has greater rights. */
 
-	afp->cred = MVFS_DUP_DEFAULT_CREDS();
-	afp->cvp = cvp;
-	CVN_HOLD(cvp);	/* Hold for this reference */
-	INITLOCK(&afp->lock, "afplock ");
-	afp->curpos = afp->buf;
+        afp->cred = MVFS_DUP_DEFAULT_CREDS();
+        if (afp->cred == NULL)
+            goto errout;
+        afp->cvp = cvp;
+        CVN_HOLD(cvp);	/* Hold for this reference */
+        INITLOCK(&afp->lock, "afplock ");
+        afp->curpos = afp->buf;
         /*
          * It is OK to set these values without the afp->lock held
          * since the afp is not yet on the mfs_aflist.
@@ -157,18 +167,18 @@ mfs_afpnew(
         afp->refcnt = 1;        /* init */
         afp->destroy = 0;       /* init destroy flag */
         afp->obsolete = 0;      /* init obsolete flag */
-	ADD_TO_EOL(&(madp->mfs_aflist), afp);
+        ADD_TO_EOL(&(madp->mfs_aflist), afp);
     }
 
     return(afp);
 
 errout:
     if (afp) {
-	if (afp->buf) KMEM_FREE(afp->buf, afp->buflen);
-	if (afp->path) STRFREE(afp->path);
-	if (afp->upath) STRFREE(afp->upath);
-	if (afp->cvp) CVN_RELE(afp->cvp);
-	KMEM_FREE(afp, sizeof(*afp));
+        if (afp->buf) KMEM_FREE(afp->buf, afp->buflen);
+        if (afp->path) STRFREE(afp->path);
+        if (afp->upath) STRFREE(afp->upath);
+        if (afp->cvp) CVN_RELE(afp->cvp, cd);
+        KMEM_FREE(afp, sizeof(*afp));
     }
 
     return(NULL);
@@ -186,7 +196,8 @@ STATIC MVFS_NOINLINE struct mfs_auditfile *
 mfs_afpget(
     char *pname,
     char *upname,
-    CLR_VNODE_T *cvp
+    CLR_VNODE_T *cvp,
+    CALL_DATA_T *cd
 )
 {
     mvfs_audit_data_t *madp = MDKI_AUDIT_GET_DATAP();
@@ -197,53 +208,57 @@ mfs_afpget(
          afp != (mfs_auditfile_t *)&(madp->mfs_aflist); 
          afp = afp->next)
     {
-	/*
+        /*
          * Only reuse audit entry if (1) it is not marked to be destroyed,
          * and (2) there is a match on both the pathnames and the vnode
          * (from the lookup of that pathname).
-	 * It is possible to have entries that have not been
-	 * freed yet because some daemon was started under the build.
-	 * e.g. clearmake creates /tmp/auditfile
-	 *    long-running daemons starts and keeps running.
-	 * clearmake terminates audit, and does audit for /tmp/auditfile
-	 * clearmake deleted (unlinks) /tmp/auditfile
-	 *    (note that long-running daemon still has vnode open).
-	 * clearmake creates new scratch auditfile at /tmp/auditfile
-	 *    but this is a different object (and vnode), even
-	 *    though the name is the same.
- 	 */
+         * It is possible to have entries that have not been
+         * freed yet because some daemon was started under the build.
+         * e.g. clearmake creates /tmp/auditfile
+         *    long-running daemons starts and keeps running.
+         * clearmake terminates audit, and does audit for /tmp/auditfile
+         * clearmake deleted (unlinks) /tmp/auditfile
+         *    (note that long-running daemon still has vnode open).
+         * clearmake creates new scratch auditfile at /tmp/auditfile
+         *    but this is a different object (and vnode), even
+         *    though the name is the same.
+         */
         if (afp->destroy != 1 &&
             (STRCMP(pname, afp->path) == 0) &&
             CVN_CMP(cvp, afp->cvp) &&
             (STRCMP(upname, afp->upath) == 0))
         {
             MVFS_LOCK(&afp->lock);
-	    afp->refcnt++;
-	    afp->obsolete = 0;		/* Can't be obsolete. */
+            afp->refcnt++;
+            afp->obsolete = 0;		/* Can't be obsolete. */
             MVFS_UNLOCK(&afp->lock);
-	    MVFS_UNLOCK(&(madp->mfs_aflock));
-	    MDB_XLOG((MDB_AUDITF,
+            MVFS_UNLOCK(&(madp->mfs_aflock));
+            MDB_XLOG((MDB_AUDITF,
                       "afpget: afp=%"KS_FMT_PTR_T" refcnt=%d pid=%d\n",
                       afp, afp->refcnt, MDKI_CURPID()));
-	    return(afp);
-	}
+            return(afp);
+        }
     }
 
     /* No previous found, allocate a new struct */
 
-    afp = mfs_afpnew(pname, upname, cvp);
+    afp = mfs_afpnew(pname, upname, cvp, cd);
     MVFS_UNLOCK(&(madp->mfs_aflock));
     MDB_XLOG((MDB_AUDITF, "afpget: (new) afp=%"KS_FMT_PTR_T" refcnt=%d pid=%d\n",
-		afp, afp->refcnt, MDKI_CURPID()));
+                afp, afp->refcnt, MDKI_CURPID()));
     return(afp);
 }
 
 STATIC void MVFS_NOINLINE
 mfs_afpdestroy(
-    mfs_auditfile_t *afp
+    mfs_auditfile_t *afp,
+    mvfs_thread_t *mth
 )
 {
+    MVFS_DECLARE_TEMP_CD(temp_cd);
     mvfs_audit_data_t *madp = MDKI_AUDIT_GET_DATAP();
+    
+    MVFS_INIT_TEMP_CD(temp_cd_p, afp->cred, mth);
 
     ASSERT(afp->refcnt = 1);        /* No destroy if more refs */
 
@@ -254,7 +269,7 @@ mfs_afpdestroy(
     RM_LIST(afp);
     MVFS_UNLOCK(&(madp->mfs_aflock));
     FREELOCK(&afp->lock);
-    if (afp->cvp) CVN_RELE(afp->cvp);
+    if (afp->cvp) CVN_RELE(afp->cvp, temp_cd_p);
     if (afp->path) STRFREE(afp->path);
     if (afp->upath) STRFREE(afp->upath);
     if (afp->buf)  KMEM_FREE(afp->buf, afp->buflen);
@@ -279,7 +294,7 @@ mfs_auditfile_t *afp;
      * held. by callers.  This debug code is now in the callers.
      */
 /*    MDB_XLOG((MDB_AUDITF, "afphold: afp=%"KS_FMT_PTR_T" refcnt=%d pid=%d\n",
-		afp, afp->refcnt, MDKI_CURPID())); */
+                afp, afp->refcnt, MDKI_CURPID())); */
 }
 
 /*
@@ -288,9 +303,9 @@ mfs_auditfile_t *afp;
  * ourselves. 
  */
 void
-mvfs_afprele(afp, thr)
+mvfs_afprele(afp, mth)
 mfs_auditfile_t *afp;
-mvfs_thread_t *thr;
+mvfs_thread_t *mth;
 {
     mvfs_common_data_t *mcdp = MDKI_COMMON_GET_DATAP();
     mvfs_audit_data_t *madp = MDKI_AUDIT_GET_DATAP();
@@ -308,7 +323,7 @@ mvfs_thread_t *thr;
 
     MVFS_LOCK(&afp->lock);
     if (afp->refcnt == 1) {   /* Sync contents */
-	mvfs_auditwrite_int(afp, thr);
+        mvfs_auditwrite_int(afp, mth);
 
         /*
          * Need to unlock apf->lock to prevent a deadlock, mfs_afpdestroy
@@ -317,7 +332,8 @@ mvfs_thread_t *thr;
          */
         afp->destroy = 1;
         MVFS_UNLOCK(&afp->lock);
-        mfs_afpdestroy(afp);
+
+        mfs_afpdestroy(afp, mth);
     } else {
         afp->refcnt--;
         MVFS_UNLOCK(&afp->lock);
@@ -349,8 +365,12 @@ mvfs_afprele_proc(
     ** it finds a "matching" one, holds it and returns it.  That case is handled
     ** in mfs_afprele() above (in the afp_race: "loop").
     */
+
+    MVFS_LOCK(&proc->mp_lock);
     my_afp = proc->mp_afp;
     proc->mp_afp = NULL;
+    MVFS_UNLOCK(&proc->mp_lock);
+
     if (my_afp != NULL) {
         MVFS_UNLOCK(&(mcdp->proc_thr.mvfs_proclock));
         mvfs_afprele(my_afp, thr);
@@ -361,16 +381,14 @@ mvfs_afprele_proc(
 }
 
 void
-mvfs_afprele_thr(thr)
-mvfs_thread_t *thr;
+mvfs_afprele_thr(mvfs_thread_t *thr)
 {
     mvfs_afprele(thr->thr_afp, thr);
-    thr->thr_afp = NULL;	/* Kill ptr */
+    thr->thr_afp = NULL;    /* Kill ptr */
 }
 
 STATIC void
-mfs_afp_obsolete(mth)
-mvfs_thread_t *mth;
+mfs_afp_obsolete(mvfs_thread_t *mth)
 {
     register mfs_auditfile_t *afp;
 
@@ -378,6 +396,7 @@ mvfs_thread_t *mth;
     MVFS_LOCK(&afp->lock);
     afp->obsolete = 1;  /* Set obsolete flag */
     MVFS_UNLOCK(&afp->lock);
+
     return;
 }
 
@@ -399,7 +418,7 @@ mfs_getbh(CALL_DATA_T *cd)
  * arg data has already been copied in (except for strbuf's) and
  * that any results will be copied out by mfs_mioctl() in vnodeops.
  */
-	
+        
 int 
 mfs_auditioctl(
     mvfscmd_block_t *kdata,
@@ -422,87 +441,88 @@ mfs_auditioctl(
      * copy in data here, and convert for LP64 if necessary 
      */
 
-    mth = MVFS_MYTHREAD(cd);		/* Get my process state */
+    mth = MVFS_MYTHREAD(cd);              /* Get my process state */
 
     switch (MCB_CMD(kdata)) {
-	case MVFS_CMD_GET_BH: {
-	    auto mvfs_bhinfo_t bhinfo;
+        case MVFS_CMD_GET_BH: {
+            auto mvfs_bhinfo_t bhinfo;
 
             if ((error = CopyInMvfs_bhinfo(kdata->infop, &bhinfo, callinfo)) != 0)
-		break;
+                break;
 
-	    bhinfo.bh = mth->thr_bh;
-	    bhinfo.bh_ref_time = mth->thr_bh_ref_time;
-	    bhinfo.flags = 0;
-	    if (mth->thr_usereftime) bhinfo.flags |= MVFS_BHF_DNC_REFTIME;
-	    if (mth->thr_attrgen != 0) bhinfo.flags |= MVFS_BHF_REVALIDATE;
+            bhinfo.bh = mth->thr_bh;
+            bhinfo.bh_ref_time = mth->thr_bh_ref_time;
+            bhinfo.flags = 0;
+            if (mth->thr_usereftime) bhinfo.flags |= MVFS_BHF_DNC_REFTIME;
+            if (mth->thr_attrgen != 0) bhinfo.flags |= MVFS_BHF_REVALIDATE;
             error = CopyOutMvfs_bhinfo(&bhinfo, kdata->infop, callinfo);
-	    break;
-	}
+            break;
+        }
 
-	case MVFS_CMD_SET_BH: {
-	    auto mvfs_bhinfo_t bhinfo;
+        case MVFS_CMD_SET_BH: {
+            auto mvfs_bhinfo_t bhinfo;
 
             if ((error = CopyInMvfs_bhinfo(kdata->infop, &bhinfo, callinfo)) != 0)
                 break;
             kdata->status = TBS_ST_OK;   
 
-	    tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
-	    if (tbsstatus != TBS_ST_OK) break;
-	 
-	    mth->thr_bh = bhinfo.bh;
-	    mth->thr_bh_ref_time = bhinfo.bh_ref_time;
+            tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
+            if (tbsstatus != TBS_ST_OK) break;
+         
+            mth->thr_bh = bhinfo.bh;
+            mth->thr_bh_ref_time = bhinfo.bh_ref_time;
             mth->thr_usereftime = ((bhinfo.flags & MVFS_BHF_DNC_REFTIME) != 0);
-	    /* 
-	     * Update attributes generation if requested 
-	     * Note: mfs_mn_newattrgen gets the mnode monitor lock (mfs_mnlock)
-	     */
-	    if ((bhinfo.flags & MVFS_BHF_REVALIDATE) != 0) {
-		mth->thr_attrgen = mfs_mn_newattrgen();
-	    }
-	    mvfs_sync_procstate(mth);
+            /* 
+             * Update attributes generation if requested 
+             * Note: mfs_mn_newattrgen gets the mnode monitor lock (mfs_mnlock)
+             */
+            if ((bhinfo.flags & MVFS_BHF_REVALIDATE) != 0) {
+                mth->thr_attrgen = mfs_mn_newattrgen();
+            }
+            mvfs_sync_procstate(mth);
             MDB_XLOG((MDB_AUDITF, "newsetbh: bh=%x.%x ref=%"KS_FMT_TV_SEC_T_X".%"KS_FMT_TV_USEC_T_X" gen=%d pid=%d\n",
-			bhinfo.bh.build_session, bhinfo.bh.target_id, 
-			bhinfo.bh_ref_time.tv_sec, bhinfo.bh_ref_time.tv_usec,
-			mth->thr_attrgen,
-			MDKI_CURPID()));
-	    break;
+                        bhinfo.bh.build_session, bhinfo.bh.target_id, 
+                        bhinfo.bh_ref_time.tv_sec, bhinfo.bh_ref_time.tv_usec,
+                        mth->thr_attrgen,
+                        MDKI_CURPID()));
+            break;
         }
-	/*
-	 * New invalidation based on generation tag.
-	 * Forces refetch of all attributes from view for objects
-	 * referenced by this process (and children from forks after
-	 * this point!)
-	 */
-	case MVFS_CMD_REVALIDATE:
-	    mth->thr_attrgen = mfs_mn_newattrgen();
-	    mvfs_sync_procstate(mth);
-	    break;
+        /*
+         * New invalidation based on generation tag.
+         * Forces refetch of all attributes from view for objects
+         * referenced by this process (and children from forks after
+         * this point!)
+         */
+        case MVFS_CMD_REVALIDATE:
+            mth->thr_attrgen = mfs_mn_newattrgen();
+            mvfs_sync_procstate(mth);
+            break;
 
-	case MVFS_CMD_GET_AFILE: {
-	    auto mfs_strbufpn_t afile;
+        case MVFS_CMD_GET_AFILE: {
+            auto mfs_strbufpn_t afile;
 
             if ((error = CopyInMfs_strbufpn(kdata->infop, &afile, callinfo)) != 0)
                 break;
             kdata->status = TBS_ST_OK;
 
-	    if (mth->thr_afp && mth->thr_afp->upath)
-		error = mfs_copyout_strbufpn(afile, mth->thr_afp->upath);
-	    else
-		error = mfs_copyout_strbufpn(afile, NULL);
-	    if (error != 0)
-		break;
-            error = CopyOutMfs_strbufpn(&afile, kdata->infop, callinfo);
-	    break;
-	}
+            if (mth->thr_afp != NULL && mth->thr_afp->upath)
+                error = mfs_copyout_strbufpn(afile, mth->thr_afp->upath);
+            else
+                error = mfs_copyout_strbufpn(afile, NULL);
 
-	case MVFS_CMD_SET_AFILE: {
-	    auto mfs_strbufpn_pair_t afile_info;
-	    auto char *path;
-	    auto char *upath;
-	    auto CLR_VNODE_T *afvp;
-	    auto SPL_T s;
-	    mvfs_audit_data_t *madp = MDKI_AUDIT_GET_DATAP();
+            if (error != 0)
+                break;
+            error = CopyOutMfs_strbufpn(&afile, kdata->infop, callinfo);
+            break;
+        }
+
+        case MVFS_CMD_SET_AFILE: {
+            auto mfs_strbufpn_pair_t afile_info;
+            auto char *path;
+            auto char *upath;
+            auto CLR_VNODE_T *afvp;
+            auto SPL_T s;
+            mvfs_audit_data_t *madp = MDKI_AUDIT_GET_DATAP();
 
             if ((error = CopyInMfs_strbufpn_pair(kdata->infop, &afile_info, callinfo)) != 0)
                 break;
@@ -521,195 +541,197 @@ mfs_auditioctl(
             ** space.  However, we're willing to waste the space for coding
             ** simplicity.
             */
-	    error = mfs_copyin_strbufpn(MFS_STRBUFPN_PAIR_GET_KPN(&afile_info), &path);
-	    if (error) break;
-	    error = mfs_copyin_strbufpn(MFS_STRBUFPN_PAIR_GET_UPN(&afile_info), &upath);
-	    if (error) {
-		STRFREE(path);
-		break;
-	    }
+            error = mfs_copyin_strbufpn(MFS_STRBUFPN_PAIR_GET_KPN(&afile_info), &path);
+            if (error) break;
+            error = mfs_copyin_strbufpn(MFS_STRBUFPN_PAIR_GET_UPN(&afile_info), &upath);
+            if (error) {
+                STRFREE(path);
+                break;
+            }
 
-	    /* 
-	     * Verify the file exists and is suitable for auditing 
-	     * This is very important or deadlocks/crashes may
-	     * result from unexpected recursion in the MFS!
+            /* 
+             * Verify the file exists and is suitable for auditing 
+             * This is very important or deadlocks/crashes may
+             * result from unexpected recursion in the MFS!
              */
 
-	    MFS_INHAUDIT(mth);
-	    error = LOOKUP_AUDIT_FILE(path, &afvp, MVFS_CD2CRED(cd));
-	    if (!error) {
-		CLR_VNODE_T *rvp = NULL;
-		if (MVOP_REALCVP(afvp, &rvp) == 0 && afvp != rvp) {
-		    /*
-		     * got a realvp through the operation, use that instead.
-		     */
+            MFS_INHAUDIT(mth);
+            error = LOOKUP_AUDIT_FILE(path, &afvp, cd);
+            if (!error) {
+                CLR_VNODE_T *rvp = NULL;
+                if (MVOP_REALCVP(afvp, &rvp) == 0 && afvp != rvp) {
+                    /*
+                     * got a realvp through the operation, use that instead.
+                     */
                     CVN_HOLD(rvp);
-		    CVN_RELE(afvp);
+                    CVN_RELE(afvp, cd);
                     afvp = rvp;
-		}
-		if (MFS_VPISMFS(MVFS_CVP_TO_VP(afvp))) {
-		    error = EINVAL;
-		} else if (!MVFS_ISVTYPE(MVFS_CVP_TO_VP(afvp), VREG)) {
-		    error = EISDIR;
-		} else {
-		    error = MVOP_ACCESS(MVFS_CVP_TO_VP(afvp), VWRITE, 0,
+                }
+                if (MFS_VPISMFS(MVFS_CVP_TO_VP(afvp))) {
+                    error = EINVAL;
+                } else if (!MVFS_ISVTYPE(MVFS_CVP_TO_VP(afvp), VREG)) {
+                    error = EISDIR;
+                } else {
+                    error = MVOP_ACCESS(MVFS_CVP_TO_VP(afvp), VWRITE, 0,
                                         cd, NULL);
-		}
-	        if (error) CVN_RELE(afvp);
-	    }
-	    MFS_ENBAUDIT(mth);
-	    if (error) {
+                }
+                if (error) CVN_RELE(afvp, cd);
+            }
+            MFS_ENBAUDIT(mth);
+            if (error) {
                 MDB_XLOG((MDB_AUDITF, "setafile: path=%s error=%d pid=%d\n",
-				path, error, MDKI_CURPID()));
-		STRFREE(path);
-		STRFREE(upath);
-		break;
-	    }
+                                path, error, MDKI_CURPID()));
+                STRFREE(path);
+                STRFREE(upath);
+                break;
+            }
 
-	    tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
-	    if (tbsstatus != TBS_ST_OK) break;
-	 
-	    /* File is suitable, release old file binding and
-	       try to attach new file. */
-	
-	    if (mth->thr_afp != NULL) {
-	        mvfs_afprele_thr(mth);
-	    }
-	    mth->thr_afp = mfs_afpget(path, upath, afvp);
-	    if (mth->thr_afp == NULL) error = ENOMEM;
+            tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
+            if (tbsstatus != TBS_ST_OK) break;
+         
+            /* File is suitable, release old file binding and
+               try to attach new file. */
 
-	    /*
-	     * Assign a new audit generation number
-	     * to force a unique choid for every different
- 	     * audit file (on DO's).
-	     */
+            if (mth->thr_afp != NULL) {
+                mvfs_afprele_thr(mth);
+            }
+            mth->thr_afp = mfs_afpget(path, upath, afvp, cd);
+            if (mth->thr_afp == NULL) error = ENOMEM;
 
-	    SPLOCK(madp->mvfs_audgenlock, s);
-	    madp->mvfs_audit_gen++;	      /* Protected by mvfs_audgenlock */
-	    mth->thr_aud_seq = madp->mvfs_audit_gen; /* State for this process */
-	    SPUNLOCK(madp->mvfs_audgenlock, s);
+            /*
+             * Assign a new audit generation number
+             * to force a unique choid for every different
+             * audit file (on DO's).
+             */
 
-	    mvfs_sync_procstate(mth);
+            SPLOCK(madp->mvfs_audgenlock, s);
+            madp->mvfs_audit_gen++;	      /* Protected by mvfs_audgenlock */
+            mth->thr_aud_seq = madp->mvfs_audit_gen; /* State for this process */
+            SPUNLOCK(madp->mvfs_audgenlock, s);
 
-	    CVN_RELE(afvp);	/* afpget held audit file vnode if needed */
+            mvfs_sync_procstate(mth);
+
+            CVN_RELE(afvp, cd);	/* afpget held audit file vnode if needed */
             MDB_XLOG((MDB_AUDITF, "setafile: path=%s afp=%"KS_FMT_PTR_T" err=%d pid=%d\n",
-		path, mth->thr_afp, error, MDKI_CURPID()));
-	    STRFREE(path);
-	    STRFREE(upath);
-	    break;
-	}
+                path, mth->thr_afp, error, MDKI_CURPID()));
+            STRFREE(path);
+            STRFREE(upath);
+            break;
+        }
 
-	case MVFS_CMD_GET_PROCF: {
-	    auto u_long procflags;  
+        case MVFS_CMD_GET_PROCF: {
+            auto u_long procflags;  
 
-	    procflags = 0;
-	    if (mth->thr_auditon) procflags |= MVFS_PF_AUDITON;
-	    if (mth->thr_auditv)  procflags |= MVFS_PF_AUDITVOB;
-	    if (mth->thr_auditnv) procflags |= MVFS_PF_AUDITNONVOB;
-	    error = CopyOutMvfs_u_long(&procflags, kdata->infop, callinfo);
-	    break;
-	}
+            procflags = 0;
+            if (mth->thr_auditon) procflags |= MVFS_PF_AUDITON;
+            if (mth->thr_auditv)  procflags |= MVFS_PF_AUDITVOB;
+            if (mth->thr_auditnv) procflags |= MVFS_PF_AUDITNONVOB;
+            error = CopyOutMvfs_u_long(&procflags, kdata->infop, callinfo);
+            break;
+        }
 
-	case MVFS_CMD_SET_PROCF: {
-	    auto u_long procflags;
+        case MVFS_CMD_SET_PROCF: {
+            auto u_long procflags;
 
-	    if ((error = CopyInMvfs_u_long(kdata->infop, &procflags, callinfo)) != 0)
-	            break;
+            if ((error = CopyInMvfs_u_long(kdata->infop, &procflags, callinfo)) != 0)
+                    break;
 
-	    tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
-	    if (tbsstatus != TBS_ST_OK) break;
-	 
-	    mth->thr_auditv = ((procflags & MVFS_PF_AUDITVOB) != 0);
-	    mth->thr_auditnv= ((procflags & MVFS_PF_AUDITNONVOB) != 0);
-	    mvfs_sync_procstate(mth);
+            tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
+            if (tbsstatus != TBS_ST_OK) break;
+         
+            mth->thr_auditv = ((procflags & MVFS_PF_AUDITVOB) != 0);
+            mth->thr_auditnv= ((procflags & MVFS_PF_AUDITNONVOB) != 0);
+            mvfs_sync_procstate(mth);
 
-	    break;
-	}
+            break;
+        }
 
-	case MVFS_CMD_START_AUDIT: {
-	    auto u_long aflags;
+        case MVFS_CMD_START_AUDIT: {
+            auto u_long aflags;
 
-	    if ((error = CopyInMvfs_u_long(kdata->infop, &aflags, callinfo)) != 0)
-	            break;
+            if ((error = CopyInMvfs_u_long(kdata->infop, &aflags, callinfo)) != 0)
+                break;
 
-	    MDB_XLOG((MDB_AUDITF, "startaudit: pid=%d\n", MDKI_CURPID()));
+            MDB_XLOG((MDB_AUDITF, "startaudit: pid=%d\n", MDKI_CURPID()));
 
-	    tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
-	    if (tbsstatus != TBS_ST_OK) break;
-	 
-	    /*
-	     * We need to insure no other thread has set the audit
-	     * state since we last synchronized, so we take the proc lock
-	     * and check it out.
-	     */
+            tbsstatus = MVFS_ESTABLISH_FORK_HANDLER();
+            if (tbsstatus != TBS_ST_OK) break;
+
+            /*
+             * We need to insure no other thread has set the audit
+             * state since we last synchronized, so we take the proc lock
+             * and check it out.
+             */
             MVFS_LOCK(&(mth->thr_proc->mp_lock));
 
-	    if (mth->thr_proc->mp_auditon) {
+            if (mth->thr_proc->mp_auditon) {
                 MVFS_UNLOCK(&(mth->thr_proc->mp_lock));
-		error = EEXIST;
-		break;
-	    }
-	    if (mth->thr_afp != mth->thr_proc->mp_afp) {
-		/* build interference of some sort. Some other thread
-		 * changed the audit file pointer between when we
-		 * entered the FS and now. We can't handle this if we
-		 * want to be atomic on audit state enabling per
-		 * process.
-		 */
+                error = EEXIST;
+                break;
+            }
+            if (mth->thr_afp != mth->thr_proc->mp_afp) {
+                /* build interference of some sort. Some other thread
+                 * changed the audit file pointer between when we
+                 * entered the FS and now. We can't handle this if we
+                 * want to be atomic on audit state enabling per
+                 * process.
+                 */
                 MVFS_UNLOCK(&(mth->thr_proc->mp_lock));
-		error = EINVAL; /* XXX ? */
-		break;
-	    }
-	    mth->thr_auditon = 1;
-	    mth->thr_auditv = ((aflags & MVFS_PF_AUDITVOB) != 0);
-	    mth->thr_auditnv= ((aflags & MVFS_PF_AUDITNONVOB) != 0);
+                error = EINVAL; /* XXX ? */
+                break;
+            }
+            mth->thr_auditon = 1;
+            mth->thr_auditv = ((aflags & MVFS_PF_AUDITVOB) != 0);
+            mth->thr_auditnv= ((aflags & MVFS_PF_AUDITNONVOB) != 0);
 #if defined(ATRIA_LP64) || defined(ATRIA_LLP64)
-	    if (MDKI_CALLER_IS_32BIT(callinfo)) 
-	        mth->thr_afp->af_transtype = 1;
+            if (MDKI_CALLER_IS_32BIT(callinfo)) 
+                mth->thr_afp->af_transtype = 1;
 #endif
-	    mvfs_sync_procstate_locked(mth); /* XXX */
-	    
+            mvfs_sync_procstate_locked(mth); /* XXX */
+
             MVFS_UNLOCK(&(mth->thr_proc->mp_lock));
             MVFS_MDEP_PROC_START_AUDIT(); /* update NT's mdep proc shadow */
-	    break;
-	}
-	case MVFS_CMD_STOP_AUDIT: {	/* Stops audit and release resources */
+            break;
+        }
+        case MVFS_CMD_STOP_AUDIT: {	/* Stops audit and release resources */
             MVFS_MDEP_PROC_STOP_AUDIT(); /* update NT's mdep proc shadow */
             MDB_XLOG((MDB_AUDITF, "stopaudit: pid=%d\n", MDKI_CURPID()));
-	    if (mth->thr_afp) {		/* Sync/release audit file if one */
-		mvfs_auditwrite(mth);
-		error = mth->thr_afp->auditwerr;	/* Delayed write error */
-		mfs_afp_obsolete(mth);	/* Obsolete (shut off) the auditfile */
-	        mvfs_afprele_thr(mth);	/* Release struct now */
-	    }
-	    mth->thr_auditon = 0;
-	    mvfs_sync_procstate(mth);	/* it will drop */
-	    break;
-	}
-	case MVFS_CMD_SYNC_AUDIT: {
+            if (mth->thr_afp != NULL) {		/* Sync/release audit file if one */
+                mvfs_auditwrite(mth);
+                error = mth->thr_afp->auditwerr;	/* Delayed write error */
+                mfs_afp_obsolete(mth);	/* Obsolete (shut off) the auditfile */
+                mvfs_afprele_thr(mth);	/* Release struct now */
+            }
+
+            mth->thr_auditon = 0;
+            mvfs_sync_procstate(mth);	/* it will drop */
+            break;
+        }
+        case MVFS_CMD_SYNC_AUDIT: {
             MDB_XLOG((MDB_AUDITF, "syncaudit: pid=%d\n", MDKI_CURPID()));
-	    if (mth->thr_afp) {	/* Sync the audit file */
-		mvfs_auditwrite(mth);
-	        error = mth->thr_afp->auditwerr;	/* Return any write error */
-	    } else error = ENOENT;	/* No audit file */
-	    break;
-	}
-	default: {
-	    error = ENOTTY;
-	    break;
-	}
-	case MVFS_CMD_AUDIT_MARKER: {
-	    auto u_long marker_flags;
+
+            if (mth->thr_afp != NULL) {	/* Sync the audit file */
+                mvfs_auditwrite(mth);
+                error = mth->thr_afp->auditwerr;	/* Return any write error */
+            } else error = ENOENT;	/* No audit file */
+            break;
+        }
+        default: {
+            error = ENOTTY;
+            break;
+        }
+        case MVFS_CMD_AUDIT_MARKER: {
+            auto u_long marker_flags;
 
             if ((error = CopyInMvfs_u_long(kdata->infop, &marker_flags, callinfo)) != 0)
                 break;
             MDB_XLOG((MDB_AUDITF, "auditmarker: pid=%d flags=%lx\n",
-		      MDKI_CURPID(), marker_flags));
+                      MDKI_CURPID(), marker_flags));
 
-	    if (mth->thr_afp) {
-		/* write a marker */
-		MFS_AUDIT_EXT(MFS_AR_MARKER, NULL, NULL, NULL, NULL, NULL,
-			      marker_flags, cd);
+            if (mth->thr_afp != NULL) {
+                /* write a marker */
+                MFS_AUDIT_EXT(MFS_AR_MARKER, NULL, NULL, NULL, NULL, NULL,
+                              marker_flags, cd);
                 if (mth->thr_afp == NULL) {
                     /* If mth->thr_afp->obsolete was set, the mfs_audit 
                      * will have set mth->thr_afp to NULL so there is
@@ -724,21 +746,21 @@ mfs_auditioctl(
                               MDKI_CURPID(), marker_flags));
                     break;
                 }
-		/*
-		 * As a side-effect, auditwrite also cleans out the
-		 * in-core buffer and thus ensures that items accessed
-		 * on both sides of the marker get recorded on both
-		 * sides.
-		 */
-		mvfs_auditwrite(mth);
-		error = mth->thr_afp->auditwerr;
-	    } else
-		error = EINVAL;
-	}
+                /*
+                 * As a side-effect, auditwrite also cleans out the
+                 * in-core buffer and thus ensures that items accessed
+                 * on both sides of the marker get recorded on both
+                 * sides.
+                 */
+                mvfs_auditwrite(mth);
+                error = mth->thr_afp->auditwerr;
+            } else
+                error = EINVAL;
+        }
     }	/* end of switch */
 
     if (error == 0 && tbsstatus != TBS_ST_OK) {
-	error = tbs_status2errno(tbsstatus);
+        error = tbs_status2errno(tbsstatus);
     }
     MVFS_BUMPTIME(stime, dtime, mfs_austat.au_ioctltime);
     return(error);
@@ -748,66 +770,64 @@ int
 mfs_v2objtype(VTYPE_T vtype)
 {
     switch (vtype) {
-	case VDIR: return(MFS_OT_DIR);
-	case VREG: return(MFS_OT_REG);
-	case VLNK: return(MFS_OT_LNK);
-	case VBLK: return(MFS_OT_BLK);
-	case VCHR: return(MFS_OT_CHR);
+        case VDIR: return(MFS_OT_DIR);
+        case VREG: return(MFS_OT_REG);
+        case VLNK: return(MFS_OT_LNK);
+        case VBLK: return(MFS_OT_BLK);
+        case VCHR: return(MFS_OT_CHR);
         default:   return(MFS_OT_NONE);
     }
 }
 
 STATIC int
-mfs_cmpdirrec(rp, kind, dvp, nm, nmlen, vp, vap)
+mfs_cmpdirrec(rp, kind, dvp, nm, nmlen, vp, dtm)
 register mfs_auditrec_t *rp;
 u_int kind;
 VNODE_T *dvp;
 char *nm;
 size_t nmlen;
 VNODE_T *vp;
-VATTR_T *vap;
+struct timeval *dtm;
 {
-    struct timeval tv;
 
     if (rp->mfs_dirrec.namlen != nmlen) {
-	MDB_XLOG((MDB_AUDITOPS2, "mismatch namlen\n"));
-	return(0);
+        MDB_XLOG((MDB_AUDITOPS2, "mismatch namlen\n"));
+        return(0);
     }
     if (rp->mfs_dirrec.objtype != mfs_v2objtype(MVFS_GETVTYPE(vp))) {
-	MDB_XLOG((MDB_AUDITOPS2, "mismatch objtype\n"));
-	return(0);
+        MDB_XLOG((MDB_AUDITOPS2, "mismatch objtype\n"));
+        return(0);
     }
-    VATTR_GET_MTIME_TV(vap, &tv);
-    if (!MFS_TVEQ(tv, rp->mfs_dirrec.objdtm)) { 
-	MDB_XLOG((MDB_AUDITOPS2, "mismatch dtm\n"));
-	return(0);
+    if (!MFS_TVEQ(*dtm, rp->mfs_dirrec.objdtm)) { 
+        MDB_XLOG((MDB_AUDITOPS2, "mismatch dtm\n"));
+        return(0);
     }
     if (dvp && MFS_ISVOB(VTOM(dvp))) {
         if (!MFS_OIDEQ(rp->mfs_dirrec.diroid,VTOM(dvp)->mn_vob.attr.obj_oid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch diroid\n"));
-	    return(0);
-	}
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch diroid\n"));
+            return(0);
+        }
     }
     if (MFS_ISVOB(VTOM(vp))) {
         if (!MFS_OIDEQ(rp->mfs_dirrec.objoid,VTOM(vp)->mn_vob.attr.obj_oid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch objoid\n"));
-	    return(0);
-	}
-	if (!MFS_OIDEQ(rp->mfs_dirrec.voboid,V_TO_MMI(vp)->mmi_voboid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch voboid\n"));
-	    return(0);
-  	}
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch objoid\n"));
+            return(0);
+        }
+        if (!MFS_OIDEQ(rp->mfs_dirrec.voboid,V_TO_MMI(vp)->mmi_voboid)) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch voboid\n"));
+            return(0);
+        }
         if (rp->mfs_dirrec.objsn.sn_high != VTOM(vp)->mn_vob.vfh.ver_dbid ||
-	    rp->mfs_dirrec.objsn.sn_low != VTOM(vp)->mn_vob.vfh.gen) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch obj serial number\n"));
-	    return(0);
+            rp->mfs_dirrec.objsn.sn_low != VTOM(vp)->mn_vob.vfh.gen) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch obj serial number\n"));
+            return(0);
         }
     }
 
     /* Use bcmp - it is faster */
     if (BCMP(rp->mfs_dirrec.name, nm, nmlen)) {
-	MDB_XLOG((MDB_AUDITOPS2, "mismatch name\n"));
-	return(0);
+        MDB_XLOG((MDB_AUDITOPS2, "mismatch name\n"));
+        return(0);
     }
 
     /* Everything matches, return a duplicate */
@@ -826,20 +846,20 @@ VNODE_T *vp;
     else nmlen = 0;
 
     if (MFS_VIEW(vp) == NULL) {
-	if (!MFS_UUIDNULL(rp->mfs_viewrec.viewuuid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch uuid\n"));
-	    return(0);
-	}
+        if (!MFS_UUIDNULL(rp->mfs_viewrec.viewuuid)) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch uuid\n"));
+            return(0);
+        }
     } else {
         if (!MFS_UUIDEQ(rp->mfs_viewrec.viewuuid, 
-					VTOM(MFS_VIEW(vp))->mn_view.svr.uuid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch uuid\n"));
-	    return(0);
-	}
+                                        VTOM(MFS_VIEW(vp))->mn_view.svr.uuid)) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch uuid\n"));
+            return(0);
+        }
     }
     if (BCMP(rp->mfs_viewrec.name, nm, nmlen)) {
-	MDB_XLOG((MDB_AUDITOPS2, "mismatch name\n"));
-	return(0);
+        MDB_XLOG((MDB_AUDITOPS2, "mismatch name\n"));
+        return(0);
     }
 
     /* All match - return dupl */
@@ -847,40 +867,38 @@ VNODE_T *vp;
 }
 
 STATIC int
-mfs_cmprwrec(rp, kind, vp, vap)
+mfs_cmprwrec(rp, kind, vp, dtm)
 register mfs_auditrec_t *rp;
 u_int kind;
 VNODE_T *vp;
-VATTR_T *vap;
+struct timeval *dtm;
 {
-    struct timeval tv;
 
     if (rp->mfs_rwrec.objtype != mfs_v2objtype(MVFS_GETVTYPE(vp))) {
-	MDB_XLOG((MDB_AUDITOPS2, "mismatch objtype\n"));
-	return(0);
+        MDB_XLOG((MDB_AUDITOPS2, "mismatch objtype\n"));
+        return(0);
     }
     /* Ignore DTM changes on writes.  They always change
        with every write. */
     if (kind != MFS_AR_WRITE) {
-	VATTR_GET_MTIME_TV(vap, &tv);
-        if (!MFS_TVEQ(tv, rp->mfs_rwrec.objdtm)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch dtm\n"));
-	    return(0);
+        if (!MFS_TVEQ(*dtm, rp->mfs_rwrec.objdtm)) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch dtm\n"));
+            return(0);
         }
     }
     if (MFS_ISVOB(VTOM(vp))) {
         if (!MFS_OIDEQ(rp->mfs_rwrec.objoid,VTOM(vp)->mn_vob.attr.obj_oid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch objoid\n"));
-	    return(0);
-	}
-	if (!MFS_OIDEQ(rp->mfs_rwrec.voboid,V_TO_MMI(vp)->mmi_voboid)) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch voboid\n"));
-	    return(0);
-  	}
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch objoid\n"));
+            return(0);
+        }
+        if (!MFS_OIDEQ(rp->mfs_rwrec.voboid,V_TO_MMI(vp)->mmi_voboid)) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch voboid\n"));
+            return(0);
+        }
         if (rp->mfs_dirrec.objsn.sn_high != VTOM(vp)->mn_vob.vfh.ver_dbid ||
-	    rp->mfs_dirrec.objsn.sn_low != VTOM(vp)->mn_vob.vfh.gen) {
-	    MDB_XLOG((MDB_AUDITOPS2, "mismatch obj serial number\n"));
-	    return(0);
+            rp->mfs_dirrec.objsn.sn_low != VTOM(vp)->mn_vob.vfh.gen) {
+            MDB_XLOG((MDB_AUDITOPS2, "mismatch obj serial number\n"));
+            return(0);
         }
     }
 
@@ -890,14 +908,14 @@ VATTR_T *vap;
 }
 
 STATIC int
-mfs_isdupl(afp, kind, dvp, nm, nmlen, vp, vap)
+mfs_isdupl(afp, kind, dvp, nm, nmlen, vp, dtm)
 mfs_auditfile_t *afp;
 u_int kind;
 VNODE_T *dvp;
 char *nm;
 size_t nmlen;
 VNODE_T *vp;
-VATTR_T *vap;
+struct timeval *dtm;
 {
    int i;
    mfs_auditrec_t *rp;
@@ -910,33 +928,33 @@ VATTR_T *vap;
       pairs during hdr file nesting. */
 
    for (i=0, rp = afp->lastpos; i < mvfs_duplsearchmax && rp >= afp->buf;
-	i++, rp = MFS_PREVREC(rp)) {
-	if (rp->kind != kind) {
-	    continue;
-	}
-	switch (kind) {
-	    case MFS_AR_ROOT:
-	    case MFS_AR_LOOKUP:
-	    case MFS_AR_RDLINK:
-		if (mfs_cmpdirrec(rp, kind, dvp,nm,nmlen, vp, vap)) return(1);
-		break;
-	    case MFS_AR_READ:
-	    case MFS_AR_WRITE:
-		if (mfs_cmprwrec(rp, kind, vp, vap)) return(1);
-		break;
-	    case MFS_AR_LINK:   /* Hard to dupl once name exists */
-	    case MFS_AR_UNLINK: /* Hard to dupl once name gone */
-	    case MFS_AR_CREATE: /* Hard to dupl once name created */
-	    case MFS_AR_RENAME:	/* Never dupls because name/oid changes */
-	    case MFS_AR_CHOID:  /* Hard to dupl cause can never get same oid */
- 	    case MFS_AR_SYMLINK: /* Hard to dupl symlink create */
-		return(0);
-	    case MFS_AR_VIEW:
-		if (mfs_cmpviewrec(rp, vp)) return (1);
-		break;
-	    case MFS_AR_MARKER:
-	    	break;			/* never considered a duplicate */
-	}
+        i++, rp = MFS_PREVREC(rp)) {
+        if (rp->kind != kind) {
+            continue;
+        }
+        switch (kind) {
+            case MFS_AR_ROOT:
+            case MFS_AR_LOOKUP:
+            case MFS_AR_RDLINK:
+                if (mfs_cmpdirrec(rp, kind, dvp, nm, nmlen, vp, dtm)) return(1);
+                break;
+            case MFS_AR_READ:
+            case MFS_AR_WRITE:
+                if (mfs_cmprwrec(rp, kind, vp, dtm)) return(1);
+                break;
+            case MFS_AR_LINK:   /* Hard to dupl once name exists */
+            case MFS_AR_UNLINK: /* Hard to dupl once name gone */
+            case MFS_AR_CREATE: /* Hard to dupl once name created */
+            case MFS_AR_RENAME:	/* Never dupls because name/oid changes */
+            case MFS_AR_CHOID:  /* Hard to dupl cause can never get same oid */
+            case MFS_AR_SYMLINK: /* Hard to dupl symlink create */
+                return(0);
+            case MFS_AR_VIEW:
+                if (mfs_cmpviewrec(rp, vp)) return (1);
+                break;
+            case MFS_AR_MARKER:
+                break;			/* never considered a duplicate */
+        }
     }
 
     /* No dupl found, return such */
@@ -966,18 +984,61 @@ mfs_auditrmstat_t *rmstatp;
 
     if (MFS_ISVOB(mnp)) {
         rmstatp->objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
-	rmstatp->objdtm.tv_sec  = 0;
-	rmstatp->objdtm.tv_usec = 0;
-	rmstatp->voboid  = V_TO_MMI(vp)->mmi_voboid;
-	rmstatp->objoid  = mnp->mn_vob.attr.obj_oid;
-	rmstatp->objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
-	rmstatp->objsn.sn_low  = mnp->mn_vob.vfh.gen;
-	rmstatp->elemoid = mnp->mn_vob.attr.elem_oid;
-	rmstatp->mtype   = (ks_uint32_t) mnp->mn_vob.attr.mtype;
+        rmstatp->objdtm.tv_sec  = 0;
+        rmstatp->objdtm.tv_usec = 0;
+        rmstatp->voboid  = V_TO_MMI(vp)->mmi_voboid;
+        rmstatp->objoid  = mnp->mn_vob.attr.obj_oid;
+        rmstatp->objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
+        rmstatp->objsn.sn_low  = mnp->mn_vob.vfh.gen;
+        rmstatp->elemoid = mnp->mn_vob.attr.elem_oid;
+        rmstatp->mtype   = (ks_uint32_t) mnp->mn_vob.attr.mtype;
     } else {
-	BZERO(rmstatp, sizeof(*rmstatp));
-	rmstatp->objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
+        BZERO(rmstatp, sizeof(*rmstatp));
+        rmstatp->objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
     }
+}
+
+/*
+ * mvfs_audit_get_mtime is called by mfs_audit() for audit record types
+ * which include current mtime of the object.  Isolated into a subroutine
+ * to facilitate using a stack local for vattr struct
+ */
+
+STATIC MVFS_NOINLINE void
+mvfs_audit_get_mtime(
+    VNODE_T *vp,
+    struct timeval *mtime_p,
+    mvfs_thread_t *mth,
+    CALL_DATA_T *cd
+)
+{
+    int error = 0;
+    VATTR_T tmp_va;
+
+    VATTR_NULL(&tmp_va);
+    VATTR_SET_MASK(&tmp_va, AT_MTIME);
+    MFS_INHREBIND(mth);
+
+    if (MFS_VPISMFS(vp)) {
+        BUMPSTAT(mfs_austat.au_vgetattr);
+        MFS_CHKSP(STK_MFSGETATTR);
+        error = mfs_getattr(vp, &tmp_va, 0, cd);
+    } else {
+        CLR_VNODE_T *cvp;
+        BUMPSTAT(mfs_austat.au_nvgetattr);
+        MFS_CHKSP(STK_GETATTR);
+        MVFS_VP_TO_CVP(vp, &cvp); /* XXX non-mvfs: fail? */
+        error = MVOP_GETATTR(vp, cvp, &tmp_va, 0, cd);
+        CVN_RELE(cvp, cd);
+    }
+
+    if (!error) {
+        VATTR_GET_MTIME_TV(&tmp_va, mtime_p);
+    } else {
+        mvfs_log(MFS_LOG_ERR, "audit: Error obtaining attrs for vp %"KS_FMT_PTR_T" - %s\n", vp,  mfs_strerr(error));
+    }
+    MVFS_FREE_VATTR_FIELDS(&tmp_va);
+    MFS_ENBREBIND(mth);
 }
 
 int
@@ -1012,16 +1073,16 @@ mfs_audit(
 
     mth = MVFS_MYTHREAD(cd);
     if (!mth->thr_auditon || mth->thr_auditinh) {
-	MDB_XLOG((MDB_AUDITOPS2, "mfs_audit: skipping audit mth 0x%"KS_FMT_PTR_T" auditon 0x%x auditinh 0x%x\n",
-	    mth, mth->thr_auditon, mth->thr_auditinh));
-	goto no_audit;
+        MDB_XLOG((MDB_AUDITOPS2, "mfs_audit: skipping audit mth 0x%"KS_FMT_PTR_T" auditon 0x%x auditinh 0x%x\n",
+            mth, mth->thr_auditon, mth->thr_auditinh));
+        goto no_audit;
     }
 
     /* Can't audit if no audit file ptr */
 
     afp = mth->thr_afp;
     if (afp == NULL) {
-	MDB_XLOG((MDB_AUDITOPS2, "mfs_audit: skipping audit NULL afp for mth 0x%"KS_FMT_PTR_T"\n", mth));
+        MDB_XLOG((MDB_AUDITOPS2, "mfs_audit: skipping audit NULL afp for mth 0x%"KS_FMT_PTR_T"\n", mth));
         goto no_audit;		/* allow stats leak */
     }
 
@@ -1035,110 +1096,73 @@ mfs_audit(
      */
 
     if (afp->obsolete) {
-	/* No need to sync writes here ... noone cares about them */
-	mvfs_afprele_thr(mth);		/* Release ref on auditfile */
-	afp = NULL;
-	mth->thr_auditon = 0;
-	mvfs_sync_procstate(mth);
-	MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-	MDB_XLOG((MDB_AUDITOPS2,
+        /* No need to sync writes here ... noone cares about them */
+        mvfs_afprele_thr(mth);		/* Release ref on auditfile */
+        afp = NULL;
+        mth->thr_auditon = 0;
+        mvfs_sync_procstate(mth);
+        MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+        MDB_XLOG((MDB_AUDITOPS2,
                   "mfs_audit: skipping audit afp 0x%"KS_FMT_PTR_T" "
                   "OBSOLETE for mth 0x%"KS_FMT_PTR_T"\n",
                   afp, mth));
-	goto no_audit;
+        goto no_audit;
     }
 
     /* Check for non-vob objects if only auditing vob obj */
 
     if (dvp) {
         if (MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
-	    if (!mth->thr_auditv) {
-		MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping vob obj directory audit mth 0x%"KS_FMT_PTR_T" dvp 0x%"KS_FMT_PTR_T"\n", mth, dvp));
-	        goto no_audit; /* allow stats leak */
-	    }
+            if (!mth->thr_auditv) {
+                MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping vob obj directory audit mth 0x%"KS_FMT_PTR_T" dvp 0x%"KS_FMT_PTR_T"\n", mth, dvp));
+                goto no_audit; /* allow stats leak */
+            }
         } else {
-	    if (!mth->thr_auditnv) {
-		MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping non-vob obj directory audit mth 0x%"KS_FMT_PTR_T" dvp 0x%"KS_FMT_PTR_T"\n", mth, dvp));
-	        goto no_audit; /* allow stats leak */
-	    }
-	}
+            if (!mth->thr_auditnv) {
+                MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping non-vob obj directory audit mth 0x%"KS_FMT_PTR_T" dvp 0x%"KS_FMT_PTR_T"\n", mth, dvp));
+                goto no_audit; /* allow stats leak */
+            }
+        }
     }
 
     if (vp) {
         if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
-	    if (!mth->thr_auditv) {
-		MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping vob obj audit mth 0x%"KS_FMT_PTR_T" vp 0x%"KS_FMT_PTR_T"\n", mth, vp));
-	        goto no_audit;
-	    }
+            if (!mth->thr_auditv) {
+                MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping vob obj audit mth 0x%"KS_FMT_PTR_T" vp 0x%"KS_FMT_PTR_T"\n", mth, vp));
+                goto no_audit;
+            }
         } else {
-	    if (!mth->thr_auditnv) {
-		MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping non-vob obj audit mth 0x%"KS_FMT_PTR_T" vp 0x%"KS_FMT_PTR_T"\n", mth, vp));
-	        goto no_audit; /* allow stats leak */
-	    }
-	}
+            if (!mth->thr_auditnv) {
+                MDB_XLOG((MDB_AUDITOPS2, "mfs_audit:  Skipping non-vob obj audit mth 0x%"KS_FMT_PTR_T" vp 0x%"KS_FMT_PTR_T"\n", mth, vp));
+                goto no_audit; /* allow stats leak */
+            }
+        }
     }
 
     /* Count audit calls that pass the above tests */
 
     BUMPSTAT(mfs_austat.au_calls);
 
-    /* Lock the audit file struct before using sub-fields */
-
-    MVFS_LOCK(&afp->lock);
-
-    /* 
-     * Do a getattr to get the DTM on the object.  We use
-     * a static vattr struct in the audit file structure to
-     * conserve stack space.  This has somewhat undesirable 
-     * attributes (auditing is single threaded over a call
-     * which may take a long time), but is the lesser of many evils.
-     * FIXME: make conditional code based on "SMALL_STACK" cpp define.
+    /*
+     * For most audited operations, do a getattr to get DTM on the object.
+     * There are several important points here:
+     *      1) VOP_GETATTR takes a lot of stack.  To save some stack,
+     *         we call mfs_getattr directly for MVFS objects
+     *         (they may call VOP_GETATTR at a lower level
+     *         to get cleartext attributes!)
+     *      2) For NFS, VOP_GETATTR() sync's all modified data to
+     *         the home node to get an uptodate mod time.  If we
+     *         did this for every write call, we might be sync'ing
+     *         every 20 bytes or so ... yeeech!  So, we do not
+     *         do the VOP_GETATTR() for writes to allow sequential
+     *         writes without syncing every one.  Similarly we skip this
+     *         for Reads which saves on getattr calls to lessen lock
+     *         contention on the View vnode.
      */
 
     if (vp) {
-
-	/* 
-         * Do getattr to get mtime.  There are several important
-         * points here:
-	 * 	1) VOP_GETATTR takes a lot of stack.  To avoid
-         *         save some stack, we call mfs_getattr directly for
-         *         MFS objects (they may call VOP_GETATTR at a lower level
-         *         to get cleartext attributes!)
-         *      2) For NFS, VOP_GETATTR() sync's all modified data to
-         *         the home node to get an uptodate mod time.  If we
-         *         did this for every write call, we might be sync'ing
-         *         every 20 bytes or so ... yeeech!  So, we do not
-         *         do the VOP_GETATTR() for writes to allow sequential
-         *         writes without syncing every one.  Similarly we skip this
-         *         for Reads which saves on getattr calls to lessen lock
-         *         contention on the View vnode.
-         */
-
-        if (MDKI_AOP_KIND_NEEDS_REAL_MTIME(kind)) {
-            VATTR_SET_MASK(&afp->va, AT_MTIME);
-	    MFS_INHREBIND(mth);
-	    if (MFS_VPISMFS(vp)) {
-	        BUMPSTAT(mfs_austat.au_vgetattr);
-                MFS_CHKSP(STK_MFSGETATTR);
-		if (mfs_getattr(vp, &afp->va, 0, cd) == 0) {
-		    VATTR_GET_MTIME_TV(&afp->va, &mtime);
-	        } else {
-                    MVFS_FREE_VATTR_FIELDS(&afp->va); /* and free any NT sids copied */
-	        }
-	    } else {
-                CLR_VNODE_T *cvp;
-	        BUMPSTAT(mfs_austat.au_nvgetattr);
-	        MFS_CHKSP(STK_GETATTR);	
-                MVFS_VP_TO_CVP(vp, &cvp); /* XXX non-mvfs: fail? */
-	        if (MVOP_GETATTR(vp, cvp, &afp->va, 0, MVFS_CD2CRED(cd)) == 0) {
-		    VATTR_GET_MTIME_TV(&afp->va, &mtime);
-	        } else {
-                    MVFS_FREE_VATTR_FIELDS(&afp->va);
-	        }
-                CVN_RELE(cvp);
-	    }
-	    MFS_ENBREBIND(mth);
- 	}
+        if (MDKI_AOP_KIND_NEEDS_REAL_MTIME(kind)) 
+            mvfs_audit_get_mtime(vp, &mtime, mth, cd);
     } 
 
     /* Get the length of the char strings if any */
@@ -1146,11 +1170,16 @@ mfs_audit(
     if (nm1) len1 = STRLEN(nm1);
     else len1 = 0;
 
-    /* Check if a redundant audit record, and discard if so. */
+    /* Lock the audit file struct before using sub-fields */
 
-    if (mfs_isdupl(afp, kind, dvp, nm1, len1, vp, &afp->va)) {
-	BUMPSTAT(mfs_austat.au_dupl);
-	goto out;
+    MVFS_LOCK(&afp->lock);
+
+    /* Check if a redundant audit record, and discard if so.
+     * This check may use the mtime acquired above.
+     */
+    if (mfs_isdupl(afp, kind, dvp, nm1, len1, vp, &mtime)) {
+        BUMPSTAT(mfs_austat.au_dupl);
+        goto out;
     }
 
     /* 
@@ -1159,324 +1188,324 @@ mfs_audit(
      */
 
     switch (kind) {
-	case MFS_AR_ROOT:
-	case MFS_AR_LOOKUP:
-	case MFS_AR_RDLINK:
-	case MFS_AR_LINK:
-	case MFS_AR_CREATE:
+        case MFS_AR_ROOT:
+        case MFS_AR_LOOKUP:
+        case MFS_AR_RDLINK:
+        case MFS_AR_LINK:
+        case MFS_AR_CREATE:
         case MFS_AR_SYMLINK:
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITDIRSIZ(len1)) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITDIRSIZ(len1)) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-    	    rp->nextoff = (u_short)MFS_AUDITDIRSIZ(len1);
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_dirrec.namlen = (u_short)len1;
-	    rp->mfs_dirrec.objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
-	    rp->mfs_dirrec.objdtm  = mtime;
-	    if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
-		mnp = VTOM(vp);
-	        rp->mfs_dirrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
-	        rp->mfs_dirrec.voboid  = V_TO_MMI(vp)->mmi_voboid;
-	        rp->mfs_dirrec.objoid  = mnp->mn_vob.attr.obj_oid;
-		rp->mfs_dirrec.objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
-		rp->mfs_dirrec.objsn.sn_low = mnp->mn_vob.vfh.gen;
-		rp->mfs_dirrec.elemoid = mnp->mn_vob.attr.elem_oid;
-		rp->mfs_dirrec.mtype   = (ks_uint32_t) mnp->mn_vob.attr.mtype;
-	    } else {
-		rp->mfs_dirrec.viewuuid = TBS_UUID_NULL;
-		rp->mfs_dirrec.voboid  = TBS_OID_NULL;
-		rp->mfs_dirrec.objoid  = TBS_OID_NULL;
-		rp->mfs_dirrec.objsn.sn_high = 0;
-		rp->mfs_dirrec.objsn.sn_low = 0;
-		rp->mfs_dirrec.elemoid = TBS_OID_NULL;
-		rp->mfs_dirrec.mtype   = 0;
-	    }
-	    if (vp && MFS_VPISMFS(vp) && MFS_VIEW(vp)) {
-	        rp->mfs_dirrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
-	    } else {
-		rp->mfs_dirrec.viewuuid = TBS_UUID_NULL;
-	    }
-	    if (dvp && MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
-		rp->mfs_dirrec.diroid  = VTOM(dvp)->mn_vob.attr.obj_oid;
-	    } else {
-		rp->mfs_dirrec.diroid  = TBS_OID_NULL;
-	    }
-	    
- 	    STRCPY(rp->mfs_dirrec.name, nm1);
-	    break;
-	/*
-	 * Unlink is unusual.  nm2 has ptr to a "saved info"
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+            rp->nextoff = (u_short)MFS_AUDITDIRSIZ(len1);
+            rp->kind = (u_short)kind;
+            rp->mfs_dirrec.namlen = (u_short)len1;
+            rp->mfs_dirrec.objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
+            rp->mfs_dirrec.objdtm  = mtime;
+            if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
+                mnp = VTOM(vp);
+                rp->mfs_dirrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
+                rp->mfs_dirrec.voboid  = V_TO_MMI(vp)->mmi_voboid;
+                rp->mfs_dirrec.objoid  = mnp->mn_vob.attr.obj_oid;
+                rp->mfs_dirrec.objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
+                rp->mfs_dirrec.objsn.sn_low = mnp->mn_vob.vfh.gen;
+                rp->mfs_dirrec.elemoid = mnp->mn_vob.attr.elem_oid;
+                rp->mfs_dirrec.mtype   = (ks_uint32_t) mnp->mn_vob.attr.mtype;
+            } else {
+                rp->mfs_dirrec.viewuuid = TBS_UUID_NULL;
+                rp->mfs_dirrec.voboid  = TBS_OID_NULL;
+                rp->mfs_dirrec.objoid  = TBS_OID_NULL;
+                rp->mfs_dirrec.objsn.sn_high = 0;
+                rp->mfs_dirrec.objsn.sn_low = 0;
+                rp->mfs_dirrec.elemoid = TBS_OID_NULL;
+                rp->mfs_dirrec.mtype   = 0;
+            }
+            if (vp && MFS_VPISMFS(vp) && MFS_VIEW(vp)) {
+                rp->mfs_dirrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
+            } else {
+                rp->mfs_dirrec.viewuuid = TBS_UUID_NULL;
+            }
+            if (dvp && MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
+                rp->mfs_dirrec.diroid  = VTOM(dvp)->mn_vob.attr.obj_oid;
+            } else {
+                rp->mfs_dirrec.diroid  = TBS_OID_NULL;
+            }
+            
+            STRCPY(rp->mfs_dirrec.name, nm1);
+            break;
+        /*
+         * Unlink is unusual.  nm2 has ptr to a "saved info"
          * record.  This is the info to log, fetched before the UNLINK
          * was done.  The object may not exist after the UNLINK for
          * us to stat in here.
          */
-	case MFS_AR_UNLINK:
-	    rmstatp = (mfs_auditrmstat_t *) nm2; 
+        case MFS_AR_UNLINK:
+            rmstatp = (mfs_auditrmstat_t *) nm2; 
 
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITDIRSIZ(len1)) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITDIRSIZ(len1)) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-    	    rp->nextoff = (u_short)MFS_AUDITDIRSIZ(len1);
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_dirrec.namlen = (u_short)len1;
-	    /* May not be remove stats for some unlinks */
-	    if (rmstatp) {
-	        rp->mfs_dirrec.objtype = rmstatp->objtype;
-	        rp->mfs_dirrec.objdtm  = rmstatp->objdtm;
-	        rp->mfs_dirrec.voboid  = rmstatp->voboid;
-	        rp->mfs_dirrec.objoid  = rmstatp->objoid;
-		rp->mfs_dirrec.objsn   = rmstatp->objsn;
-	        rp->mfs_dirrec.elemoid = rmstatp->elemoid;
-	        rp->mfs_dirrec.mtype   = rmstatp->mtype;
-	    } else {
-		rp->mfs_dirrec.objtype = 0;
-		rp->mfs_dirrec.objdtm.tv_sec  = 0;
-		rp->mfs_dirrec.objdtm.tv_usec = 0;
-		rp->mfs_dirrec.voboid  = TBS_OID_NULL;
-		rp->mfs_dirrec.objoid  = TBS_OID_NULL;
-		rp->mfs_dirrec.objsn.sn_high = 0;
-		rp->mfs_dirrec.objsn.sn_low = 0;
-		rp->mfs_dirrec.elemoid = TBS_OID_NULL;
-		rp->mfs_dirrec.mtype   = 0;
-	    }
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+            rp->nextoff = (u_short)MFS_AUDITDIRSIZ(len1);
+            rp->kind = (u_short)kind;
+            rp->mfs_dirrec.namlen = (u_short)len1;
+            /* May not be remove stats for some unlinks */
+            if (rmstatp) {
+                rp->mfs_dirrec.objtype = rmstatp->objtype;
+                rp->mfs_dirrec.objdtm  = rmstatp->objdtm;
+                rp->mfs_dirrec.voboid  = rmstatp->voboid;
+                rp->mfs_dirrec.objoid  = rmstatp->objoid;
+                rp->mfs_dirrec.objsn   = rmstatp->objsn;
+                rp->mfs_dirrec.elemoid = rmstatp->elemoid;
+                rp->mfs_dirrec.mtype   = rmstatp->mtype;
+            } else {
+                rp->mfs_dirrec.objtype = 0;
+                rp->mfs_dirrec.objdtm.tv_sec  = 0;
+                rp->mfs_dirrec.objdtm.tv_usec = 0;
+                rp->mfs_dirrec.voboid  = TBS_OID_NULL;
+                rp->mfs_dirrec.objoid  = TBS_OID_NULL;
+                rp->mfs_dirrec.objsn.sn_high = 0;
+                rp->mfs_dirrec.objsn.sn_low = 0;
+                rp->mfs_dirrec.elemoid = TBS_OID_NULL;
+                rp->mfs_dirrec.mtype   = 0;
+            }
 
-	    /* For remove, must take view from the dir. */
-	    if (dvp && MFS_VPISMFS(dvp) && MFS_VIEW(dvp)) {
-	        rp->mfs_dirrec.viewuuid = VTOM(MFS_VIEW(dvp))->mn_view.svr.uuid;
-	    } else {
-		rp->mfs_dirrec.viewuuid = TBS_UUID_NULL;
-	    }
-	    if (dvp && MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
-		rp->mfs_dirrec.diroid  = VTOM(dvp)->mn_vob.attr.obj_oid;
-	    } else {
-		rp->mfs_dirrec.diroid  = TBS_OID_NULL;
-	    }
-	    
- 	    STRCPY(rp->mfs_dirrec.name, nm1);
-	    break;
-	case MFS_AR_READ:
-	case MFS_AR_WRITE:
-	case MFS_AR_TRUNCATE:
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITRWSIZ) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            /* For remove, must take view from the dir. */
+            if (dvp && MFS_VPISMFS(dvp) && MFS_VIEW(dvp)) {
+                rp->mfs_dirrec.viewuuid = VTOM(MFS_VIEW(dvp))->mn_view.svr.uuid;
+            } else {
+                rp->mfs_dirrec.viewuuid = TBS_UUID_NULL;
+            }
+            if (dvp && MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
+                rp->mfs_dirrec.diroid  = VTOM(dvp)->mn_vob.attr.obj_oid;
+            } else {
+                rp->mfs_dirrec.diroid  = TBS_OID_NULL;
+            }
+            
+            STRCPY(rp->mfs_dirrec.name, nm1);
+            break;
+        case MFS_AR_READ:
+        case MFS_AR_WRITE:
+        case MFS_AR_TRUNCATE:
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITRWSIZ) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-    	    rp->nextoff = MFS_AUDITRWSIZ;
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_rwrec.objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
-	    rp->mfs_rwrec.objdtm  = mtime;
-	    if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
-		mnp = VTOM(vp);
-		rp->mfs_rwrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
-	        rp->mfs_rwrec.voboid  = V_TO_MMI(vp)->mmi_voboid;
-	        rp->mfs_rwrec.objoid  = mnp->mn_vob.attr.obj_oid;
-		rp->mfs_rwrec.objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
-		rp->mfs_rwrec.objsn.sn_low = mnp->mn_vob.vfh.gen;
-		rp->mfs_rwrec.elemoid = mnp->mn_vob.attr.elem_oid;
-		rp->mfs_rwrec.mtype   = (ks_uint32_t) mnp->mn_vob.attr.mtype;
-	    } else {
-		rp->mfs_rwrec.viewuuid = TBS_UUID_NULL;
-		rp->mfs_rwrec.voboid  = TBS_OID_NULL;
-		rp->mfs_rwrec.objoid  = TBS_OID_NULL;
-		rp->mfs_rwrec.objsn.sn_high = 0;
-		rp->mfs_rwrec.objsn.sn_low = 0;
-		rp->mfs_rwrec.elemoid = TBS_OID_NULL;
-		rp->mfs_rwrec.mtype   = 0;
-	    }
-	    break;
-	case MFS_AR_RENAME:
-    	    if (nm2) len2 = STRLEN(nm2);	/* Length of name */
-    	    else len2 = 0;
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITRNMSIZ(len1, len2)) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+            rp->nextoff = MFS_AUDITRWSIZ;
+            rp->kind = (u_short)kind;
+            rp->mfs_rwrec.objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
+            rp->mfs_rwrec.objdtm  = mtime;
+            if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
+                mnp = VTOM(vp);
+                rp->mfs_rwrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
+                rp->mfs_rwrec.voboid  = V_TO_MMI(vp)->mmi_voboid;
+                rp->mfs_rwrec.objoid  = mnp->mn_vob.attr.obj_oid;
+                rp->mfs_rwrec.objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
+                rp->mfs_rwrec.objsn.sn_low = mnp->mn_vob.vfh.gen;
+                rp->mfs_rwrec.elemoid = mnp->mn_vob.attr.elem_oid;
+                rp->mfs_rwrec.mtype   = (ks_uint32_t) mnp->mn_vob.attr.mtype;
+            } else {
+                rp->mfs_rwrec.viewuuid = TBS_UUID_NULL;
+                rp->mfs_rwrec.voboid  = TBS_OID_NULL;
+                rp->mfs_rwrec.objoid  = TBS_OID_NULL;
+                rp->mfs_rwrec.objsn.sn_high = 0;
+                rp->mfs_rwrec.objsn.sn_low = 0;
+                rp->mfs_rwrec.elemoid = TBS_OID_NULL;
+                rp->mfs_rwrec.mtype   = 0;
+            }
+            break;
+        case MFS_AR_RENAME:
+            if (nm2) len2 = STRLEN(nm2);	/* Length of name */
+            else len2 = 0;
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITRNMSIZ(len1, len2)) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-    	    rp->nextoff = (u_short)MFS_AUDITRNMSIZ(len1,len2);
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_rnmrec.o_namlen = (u_short)len1;
-	    rp->mfs_rnmrec.t_namlen = (u_short)len2;
-	    /* Take view uuid from first dir.  Renames cannot
-	     * be between two different views.
-	     */
-	    if (MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
-		rp->mfs_rnmrec.viewuuid  = VTOM(MFS_VIEW(dvp))->mn_view.svr.uuid;
-		rp->mfs_rnmrec.o_diroid  = VTOM(dvp)->mn_vob.attr.obj_oid;
-	    } else {
-		rp->mfs_rnmrec.o_diroid  = TBS_OID_NULL;
-	    }
-	    if (MFS_VPISMFS(dvp2) && MFS_ISVOB(VTOM(dvp2))) {
-		rp->mfs_rnmrec.t_diroid  = VTOM(dvp2)->mn_vob.attr.obj_oid;
-	    } else {
-		rp->mfs_rnmrec.t_diroid  = TBS_OID_NULL;
-	    }
-	    STRCPY(rp->mfs_rnmrec.name, nm1);
-	    rp->mfs_rnmrec.name[len1] = '\0';	/* Make sure end of string */
-	    STRCPY(&rp->mfs_rnmrec.name[len1+1], nm2);
-	    break;
-	case MFS_AR_CHOID:
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITCHOIDSIZ) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+            rp->nextoff = (u_short)MFS_AUDITRNMSIZ(len1,len2);
+            rp->kind = (u_short)kind;
+            rp->mfs_rnmrec.o_namlen = (u_short)len1;
+            rp->mfs_rnmrec.t_namlen = (u_short)len2;
+            /* Take view uuid from first dir.  Renames cannot
+             * be between two different views.
+             */
+            if (MFS_VPISMFS(dvp) && MFS_ISVOB(VTOM(dvp))) {
+                rp->mfs_rnmrec.viewuuid  = VTOM(MFS_VIEW(dvp))->mn_view.svr.uuid;
+                rp->mfs_rnmrec.o_diroid  = VTOM(dvp)->mn_vob.attr.obj_oid;
+            } else {
+                rp->mfs_rnmrec.o_diroid  = TBS_OID_NULL;
+            }
+            if (MFS_VPISMFS(dvp2) && MFS_ISVOB(VTOM(dvp2))) {
+                rp->mfs_rnmrec.t_diroid  = VTOM(dvp2)->mn_vob.attr.obj_oid;
+            } else {
+                rp->mfs_rnmrec.t_diroid  = TBS_OID_NULL;
+            }
+            STRCPY(rp->mfs_rnmrec.name, nm1);
+            rp->mfs_rnmrec.name[len1] = '\0';	/* Make sure end of string */
+            STRCPY(&rp->mfs_rnmrec.name[len1+1], nm2);
+            break;
+        case MFS_AR_CHOID:
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITCHOIDSIZ) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-	
-    	    rp->nextoff = MFS_AUDITCHOIDSIZ;
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_choidrec.prevoid = *(tbs_oid_t *)nm2;
-	    rp->mfs_choidrec.objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
-	    if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
-		mnp = VTOM(vp);
-		rp->mfs_choidrec.viewuuid = 
-				VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
-	        rp->mfs_choidrec.objoid  = *(tbs_oid_t *)nm1;
-		rp->mfs_choidrec.objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
-		rp->mfs_choidrec.objsn.sn_low  = mnp->mn_vob.vfh.gen;
-	        rp->mfs_choidrec.mtype = 
-			(ks_uint32_t)mnp->mn_vob.attr.mtype;
-	    } else {
-		rp->mfs_choidrec.viewuuid = TBS_UUID_NULL;
-	        rp->mfs_choidrec.objoid  = TBS_OID_NULL;
-		rp->mfs_choidrec.objsn.sn_high = 0;
-		rp->mfs_choidrec.objsn.sn_low = 0;
-	        rp->mfs_choidrec.mtype = 0;
-	    }
-	    break;
-	case MFS_AR_VIEW:
-	    len1 = STRLEN(mfs_vp2vw(vp));
-	   
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITVIEWSIZ(len1)) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+        
+            rp->nextoff = MFS_AUDITCHOIDSIZ;
+            rp->kind = (u_short)kind;
+            rp->mfs_choidrec.prevoid = *(tbs_oid_t *)nm2;
+            rp->mfs_choidrec.objtype = (u_short)mfs_v2objtype(MVFS_GETVTYPE(vp));
+            if (MFS_VPISMFS(vp) && MFS_ISVOB(VTOM(vp))) {
+                mnp = VTOM(vp);
+                rp->mfs_choidrec.viewuuid = 
+                                VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
+                rp->mfs_choidrec.objoid  = *(tbs_oid_t *)nm1;
+                rp->mfs_choidrec.objsn.sn_high = mnp->mn_vob.vfh.ver_dbid;
+                rp->mfs_choidrec.objsn.sn_low  = mnp->mn_vob.vfh.gen;
+                rp->mfs_choidrec.mtype = 
+                        (ks_uint32_t)mnp->mn_vob.attr.mtype;
+            } else {
+                rp->mfs_choidrec.viewuuid = TBS_UUID_NULL;
+                rp->mfs_choidrec.objoid  = TBS_OID_NULL;
+                rp->mfs_choidrec.objsn.sn_high = 0;
+                rp->mfs_choidrec.objsn.sn_low = 0;
+                rp->mfs_choidrec.mtype = 0;
+            }
+            break;
+        case MFS_AR_VIEW:
+            len1 = STRLEN(mfs_vp2vw(vp));
+           
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITVIEWSIZ(len1)) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-	
-    	    rp->nextoff = (u_short)MFS_AUDITVIEWSIZ(len1);
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_viewrec.namlen = (u_short)len1;
-	    rp->mfs_viewrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
- 	    STRNCPY(rp->mfs_viewrec.name, mfs_vp2vw(vp), len1+1);
-	    break;
-	case MFS_AR_MARKER:
-	    if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
-			 MFS_AUDITMARKERSIZ) > afp->buflen) {
-		/* If writing can make room tell caller to flush 
-		   and try again.*/
-		if (afp->curpos != afp->buf) {
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(1);
-		} else {
-		    afp->auditwerr=ENOSPC;
-		    MVFS_UNLOCK(&afp->lock);
-		    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
-		    return(0);
-		}
-	    }
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+        
+            rp->nextoff = (u_short)MFS_AUDITVIEWSIZ(len1);
+            rp->kind = (u_short)kind;
+            rp->mfs_viewrec.namlen = (u_short)len1;
+            rp->mfs_viewrec.viewuuid = VTOM(MFS_VIEW(vp))->mn_view.svr.uuid;
+            STRNCPY(rp->mfs_viewrec.name, mfs_vp2vw(vp), len1+1);
+            break;
+        case MFS_AR_MARKER:
+            if ((MFS_AUDITOFF(afp->curpos, afp->buf) +
+                         MFS_AUDITMARKERSIZ) > afp->buflen) {
+                /* If writing can make room tell caller to flush 
+                   and try again.*/
+                if (afp->curpos != afp->buf) {
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(1);
+                } else {
+                    afp->auditwerr=ENOSPC;
+                    MVFS_UNLOCK(&afp->lock);
+                    MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
+                    return(0);
+                }
+            }
             if (afp->auditwerr) goto out;
-    	    rp = afp->curpos;
-    	    rp->version = MFS_AUDITVERSION;
-    	    rp->prevoff = afp->lastsize;
-	
-    	    rp->nextoff = MFS_AUDITMARKERSIZ;
-    	    rp->kind = (u_short)kind;
-	    rp->mfs_markerrec.markerval = flags;
-	    break;
+            rp = afp->curpos;
+            rp->version = MFS_AUDITVERSION;
+            rp->prevoff = afp->lastsize;
+        
+            rp->nextoff = MFS_AUDITMARKERSIZ;
+            rp->kind = (u_short)kind;
+            rp->mfs_markerrec.markerval = flags;
+            break;
 
-	default:
-	    mvfs_log(MFS_LOG_WARN, 
-		     "audit: unknown audit record type %d\n", kind);
-	    rp = 0;
-	    goto out;
+        default:
+            mvfs_log(MFS_LOG_WARN, 
+                     "audit: unknown audit record type %d\n", kind);
+            rp = 0;
+            goto out;
     }
 
     ASSERT(rp->nextoff <= sizeof(mfs_auditrec_t)); 
@@ -1499,7 +1528,6 @@ no_audit:
     }
 #endif
     return(0);
-
 }
 
 void
@@ -1520,11 +1548,12 @@ register mfs_auditfile_t *afp;
 register mvfs_thread_t *mth;
 {
     struct _ucva {
-	CRED_T *cred;
-	VATTR_T va;
-	struct uio uio;
-	IOVEC_T iovec;
+        CRED_T *cred;
+        VATTR_T va;
+        struct uio uio;
+        IOVEC_T iovec;
     } *uvp;
+    MVFS_DECLARE_TEMP_CD(temp_cd);
     CLR_VNODE_T *cvp = NULL;
     struct uio *uiop;
     struct mfs_auditrec_32 *tbufp = NULL;
@@ -1534,24 +1563,23 @@ register mvfs_thread_t *mth;
     timestruc_t dtime;
     void *afp_file;
     u_long bytes_to_write;
-
+    
     MDKI_HRTIME(&stime);
 
-    ASSERT(mth == mvfs_mythread());	/* we must inhibit ourselves */
-    ASSERT(&afp->lock);
+    /* ASSERT(&afp->lock); */ 
 
     /* If a delayed write error, just clear the bufptrs and return */
 
     if (afp->auditwerr) {
-	afp->curpos = afp->buf;
-	afp->lastpos = NULL;
-	goto out;
+        afp->curpos = afp->buf;
+        afp->lastpos = NULL;
+        goto out;
     }
 
     /* Check for empty buffer */
 
     if (afp->curpos == afp->buf)  {
-	goto out;
+        goto out;
     }
 
     /* Inhibit audit of ops during audit write */
@@ -1572,12 +1600,12 @@ register mvfs_thread_t *mth;
 #if defined(ATRIA_LP64) || defined(ATRIA_LLP64)
     /* LP64 kernel must translate some record fields for 32-bit apps */
     if (afp->af_transtype) {
-	/* 
+        /* 
          * Using mvfs_auditbufsize is not quite accurate, but safe, since
          * this native LP64 version is larger than the 32-bit version we 
          * are about to convert to. 
-	 */
-	tbufp = (struct mfs_auditrec_32 *)KMEM_ALLOC(mvfs_auditbufsiz, KM_SLEEP);
+         */
+        tbufp = (struct mfs_auditrec_32 *)KMEM_ALLOC(mvfs_auditbufsiz, KM_SLEEP);
         if (tbufp == NULL) {
             error = ENOMEM;
             goto errout;
@@ -1585,7 +1613,7 @@ register mvfs_thread_t *mth;
     }
 
     if (afp->af_transtype && (tbufp != NULL)) {
-	mfs_auditbuf_to_mfs_auditbuf_32(afp->buf, tbufp, afp->curpos);
+        mfs_auditbuf_to_mfs_auditbuf_32(afp->buf, tbufp, afp->curpos);
     }
 #endif 
 
@@ -1593,19 +1621,20 @@ register mvfs_thread_t *mth;
 
     cvp = afp->cvp;	/* Copy out the vp in case open changes it. */
     if (cvp == NULL) {
-	mvfs_log(MFS_LOG_ERR, "no audit file on auditwrite\n");
-	error = ESTALE;
-	goto errout;
+        mvfs_log(MFS_LOG_ERR, "no audit file on auditwrite\n");
+        error = ESTALE;
+        goto errout;
     }
+    MVFS_INIT_TEMP_CD(temp_cd_p, afp->cred, mth);
     CVN_HOLD(cvp);
-    error = MVOP_OPEN_KERNEL(&cvp, FWRITE, afp->cred, &afp_file);
+    error = MVOP_OPEN_KERNEL(&cvp, FWRITE, temp_cd_p, &afp_file);
     if (error) goto errout;
 
     /* Use getattr to get end of file for write */
 
     MFS_CHKSP(STK_GETATTR);
     VATTR_SET_MASK(&uvp->va, AT_SIZE);
-    error = MVOP_GETATTR(MVFS_CVP_TO_VP(cvp), cvp, &uvp->va, 0, afp->cred);
+    error = MVOP_GETATTR(MVFS_CVP_TO_VP(cvp), cvp, &uvp->va, 0, temp_cd_p);
     if (error) goto closeout;
 
     /* 
@@ -1613,7 +1642,7 @@ register mvfs_thread_t *mth;
      */
     bytes_to_write = MFS_AUDITOFF(afp->curpos, afp->buf);
     mfs_uioset(uiop, (tbufp != NULL) ? (char *)tbufp : (char *)afp->buf,
-		bytes_to_write, uvp->va.va_size, UIO_SYSSPACE);
+                bytes_to_write, uvp->va.va_size, UIO_SYSSPACE);
 
     MVOP_RWWRLOCK(cvp, NULL);
 
@@ -1624,7 +1653,7 @@ register mvfs_thread_t *mth;
     ** isn't one.
     */
     do {
-        error = MVOP_WRITE_KERNEL(cvp, uiop, 0, NULL, afp->cred, afp_file);
+        error = MVOP_WRITE_KERNEL(cvp, uiop, 0, NULL, temp_cd_p, afp_file);
         if (error == 0) {
             if (uiop->uio_resid == bytes_to_write) { /* No progress... */
                 MDB_XLOG((MDB_AUDITF,
@@ -1653,22 +1682,22 @@ register mvfs_thread_t *mth;
 closeout:
     xerror = MVOP_CLOSE_KERNEL(cvp, FWRITE, /* Close audit file */
                                MVFS_LASTCLOSE_COUNT | MVFS_KEEPHANDLE,
-                               (MOFFSET_T)0, afp->cred, afp_file);
+                               (MOFFSET_T)0, temp_cd_p, afp_file);
     if (!error) error = xerror;		/* Don't overwrite real error */
 
 errout:
 #if defined(ATRIA_LP64) || defined(ATRIA_LLP64)
     if (tbufp != NULL) {
-	KMEM_FREE(tbufp,mvfs_auditbufsiz);
+        KMEM_FREE(tbufp,mvfs_auditbufsiz);
     }
 #endif
 
     MVFS_FREE_VATTR_FIELDS(&uvp->va);
     KMEM_FREE(uvp, sizeof(*uvp));
-    if (cvp) CVN_RELE(cvp);
+    if (cvp) CVN_RELE(cvp, temp_cd_p);
     MFS_ENBAUDIT(mth);
     if (error) {
-	afp->auditwerr = error;
+        afp->auditwerr = error;
         mvfs_logperr(MFS_LOG_WARN, error, "audit write to %s", afp->path);
     }
     afp->lastpos = NULL;		/* Reset ptrs */
@@ -1677,4 +1706,4 @@ out:
     MVFS_BUMPTIME(stime, dtime, mfs_austat.au_time);
     return;
 }
-static const char vnode_verid_mvfs_auditops_c[] = "$Id:  4cfe757e.6a6611e2.936a.00:01:83:0d:bf:e7 $";
+static const char vnode_verid_mvfs_auditops_c[] = "$Id:  b8894e10.97fe11e3.94b5.00:01:83:9c:f6:11 $";

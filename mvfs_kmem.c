@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1991, 2007. */
+/* * (C) Copyright IBM Corporation 1991, 2013. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -96,7 +96,7 @@ struct _mvfs_kmem_rbuffer *mvfs_kmem_rbuffer_end = &mvfs_kmem_rbuffer[MVFS_KMRBU
  */
 
 #define MVFS_SLABSIZE	4096		/* largest of the page sizes on
-					   ports */
+                                           ports */
 /*
  * This slab footer is placed at the end of every slab in a slab list.
  * It's used for bookkeeping and slab management within each individual
@@ -122,7 +122,7 @@ struct mvfs_slab_list {
     SPLOCK_T mvfs_slablock;                 /* lock to protect this list */
     struct mvfs_slab_footer *slb_head;      /* head of list */
     unsigned int slb_eltsize;		    /* size of elements--used
-					       to find things on this slab */
+                                               to find things on this slab */
     unsigned int slb_eltpayload_size;       /* payload_size within each elem */
 
     int slb_tot_eltcount;                   /* total elements in list */
@@ -155,21 +155,21 @@ struct mvfs_slab_freelist {
 typedef union mvfs_aligner {
     struct mvfs_slab_freelist te_flist;
     struct {
-	void *foo_spacer;
-	union {
+        void *foo_spacer;
+        union {
             /*
              * Put data types with most restrictive alignment requirements
              * into this union, to make sure returned storage is allocated
              * appropriately.
              */
-	    MVFS_MAX_ALIGN_T foo_long;
-	    MVFS_MAX_ALIGN_T *foo_ptr;
-	} align;
+            MVFS_MAX_ALIGN_T foo_long;
+            MVFS_MAX_ALIGN_T *foo_ptr;
+        } align;
     } foo;
 } mvfs_aligner_t;
 
 STATIC mvfs_slab_footer_t 
-	*mvfs_new_slab_int(P1(unsigned int *size) PN(int traced));
+        *mvfs_new_slab_int(unsigned int *size,int traced);
 
 STATIC void
 mvfs_free_slab(
@@ -183,11 +183,11 @@ void mvfs_ktrace_unload(P_NONE);
 #endif
 
 STATIC int mvfs_kmem_init_count = 0;	/* some ports may need to do
-					   early slab inits, so we count. */
+                                           early slab inits, so we count. */
 STATIC int mvfs_kmem_extra_inits = 0;	/* some ports need extra early init,
-					   and jump-start inside the first
-					   alloc.  If extra_inits ==
-					   init_count, then we can unload. */
+                                           and jump-start inside the first
+                                           alloc.  If extra_inits ==
+                                           init_count, then we can unload. */
 
 #ifdef KMEMDEBUG
 mvfs_slab_list_t * mvfs_kmemhead_slab; /* slab for kmem headers */
@@ -202,7 +202,7 @@ void
 mfs_kmem_init()
 {
     if (mvfs_kmem_init_count++ > 0)
-	return;				/* already done */
+        return;				/* already done */
 #ifdef KMEMDEBUG
     INITSPLOCK(mfs_kmlock,"mvfs_kmem_spl");
     mvfs_kmemhead_slab = mvfs_create_slablist(sizeof(struct mfs_kmemhead), FALSE, "mvfs_kmem_slab");
@@ -221,23 +221,23 @@ void
 mfs_kmem_unload()
 {
     if (--mvfs_kmem_init_count > mvfs_kmem_extra_inits)
-	return;				/* not yet... */
+        return;				/* not yet... */
 #ifdef MVFS_KMEMTRACE
     mvfs_ktrace_unload();
 #endif
 #ifdef KMEMDEBUG
     {
-	if (mfs_kmalloc != NULL) {
-	    MVFS_PRINTF("mfs_kmem_unload: Found storage allocated, dumping kmem alloc list\n");
-	    mfs_print_kmem = 1;
-	    mfs_prkmem();
-	}
-	else {
-	    MVFS_PRINTF("mfs_kmem_unload: No outstanding storage allocated\n");
-	}
+        if (mfs_kmalloc != NULL) {
+            MVFS_PRINTF("mfs_kmem_unload: Found storage allocated, dumping kmem alloc list\n");
+            mfs_print_kmem = 1;
+            mfs_prkmem();
+        }
+        else {
+            MVFS_PRINTF("mfs_kmem_unload: No outstanding storage allocated\n");
+        }
 
         mvfs_destroy_slablist(mvfs_kmemhead_slab);
-	mvfs_kmemhead_slab = NULL;
+        mvfs_kmemhead_slab = NULL;
     }
     FREESPLOCK(mfs_kmlock);
 #endif
@@ -260,10 +260,10 @@ mfs_prkmem()
 #ifdef KMEMDEBUG
  
     typedef struct {
-	struct mfs_kmemhead *ptr;
+        struct mfs_kmemhead *ptr;
         caddr_t returnpc;
         caddr_t returnpc2;
-	u_long size;
+        u_long size;
     } kmlist_t;
 
     struct mfs_kmemhead *p;
@@ -272,42 +272,42 @@ mfs_prkmem()
     SPL_T s;
     
     if (mfs_print_kmem != 0) {
-	mfs_print_kmem = 0;	/* Clear flag in case parallel syncs */
-	MVFS_PRINTF("---- mvfs alloc map:  time=0x%"MVFS_FMT_CTIME_X"  bytes=%d  blocks=%d ----\n", 
-			MDKI_CTIME(), mfs_kmtotal, mfs_kmcount);
-	kmlist = (kmlist_t *)REAL_KMEM_ALLOC(MVFS_PRKMLIST_SZ*sizeof(kmlist[0]), KM_NOSLEEP);
-	if (kmlist == NULL) {
-	    MVFS_PRINTF("No memory for print list\n");
-	    return;
-	}
-	BZERO(kmlist, MVFS_PRKMLIST_SZ*sizeof(kmlist[0]));
+        mfs_print_kmem = 0;	/* Clear flag in case parallel syncs */
+        MVFS_PRINTF("---- mvfs alloc map:  time=0x%"MVFS_FMT_CTIME_X"  bytes=%d  blocks=%d ----\n", 
+                        MDKI_CTIME(), mfs_kmtotal, mfs_kmcount);
+        kmlist = (kmlist_t *)REAL_KMEM_ALLOC(MVFS_PRKMLIST_SZ*sizeof(kmlist[0]), KM_NOSLEEP);
+        if (kmlist == NULL) {
+            MVFS_PRINTF("No memory for print list\n");
+            return;
+        }
+        BZERO(kmlist, MVFS_PRKMLIST_SZ*sizeof(kmlist[0]));
         SPLOCK(mfs_kmlock, s);
         for (i=0, p = mfs_kmalloc; p != NULL && i < MVFS_PRKMLIST_SZ; p = p->next, i++) {
-	    kmlist[i].ptr = p;
-	    kmlist[i].returnpc = p->returnpc;
-	    kmlist[i].returnpc2 = p->returnpc2;
-	    kmlist[i].size = p->thisblksize;
-	}
+            kmlist[i].ptr = p;
+            kmlist[i].returnpc = p->returnpc;
+            kmlist[i].returnpc2 = p->returnpc2;
+            kmlist[i].size = p->thisblksize;
+        }
         entcnt = i;
-	SPUNLOCK(mfs_kmlock, s);
+        SPUNLOCK(mfs_kmlock, s);
 
-	/* 
-	 * Now, print stuff out without spinlock held. 
-	 * Note that it is OK to print in multiples of 4 
-	 * (past the last ent) since * the array allocated above 
-	 * was allocated as a multiple of 4 ents, and the 
-	 * contents were pre-zeroed.
-	 */
+        /* 
+         * Now, print stuff out without spinlock held. 
+         * Note that it is OK to print in multiples of 4 
+         * (past the last ent) since * the array allocated above 
+         * was allocated as a multiple of 4 ents, and the 
+         * contents were pre-zeroed.
+         */
 
-	for (i=0; i < entcnt; i+=4) {
-	    MVFS_PRINTF("%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\t%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\t%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\t%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\n", 
-		kmlist[i].ptr,   kmlist[i].returnpc,   kmlist[i].size,
-		kmlist[i+1].ptr, kmlist[i+1].returnpc, kmlist[i+1].size,
-		kmlist[i+2].ptr, kmlist[i+2].returnpc, kmlist[i+2].size,
-		kmlist[i+3].ptr, kmlist[i+3].returnpc, kmlist[i+3].size);
-	    MDKI_USECDELAY(100000);
-	}
-	REAL_KMEM_FREE(kmlist, MVFS_PRKMLIST_SZ*sizeof(kmlist[0]));
+        for (i=0; i < entcnt; i+=4) {
+            MVFS_PRINTF("%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\t%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\t%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\t%"KS_FMT_PTR_T" %"KS_FMT_PTR_T" %d\n", 
+                kmlist[i].ptr,   kmlist[i].returnpc,   kmlist[i].size,
+                kmlist[i+1].ptr, kmlist[i+1].returnpc, kmlist[i+1].size,
+                kmlist[i+2].ptr, kmlist[i+2].returnpc, kmlist[i+2].size,
+                kmlist[i+3].ptr, kmlist[i+3].returnpc, kmlist[i+3].size);
+            MDKI_USECDELAY(100000);
+        }
+        REAL_KMEM_FREE(kmlist, MVFS_PRKMLIST_SZ*sizeof(kmlist[0]));
     }
 #endif
 }
@@ -341,17 +341,17 @@ mfs_beparanoid(void)
     SPLOCK(mfs_kmlock, s);
     for (p = mfs_kmalloc; p != NULL; p = p->next) {
         if (p->magic != MVFS_KMEMMAGIC) {
-	    SPUNLOCK(mfs_kmlock, s);
-	    MVFS_PRINTF("ptr = %"KS_FMT_PTR_T": ", p);
-	    MDKI_PANIC("bad km magic\n");
-	}
+            SPUNLOCK(mfs_kmlock, s);
+            MVFS_PRINTF("ptr = %"KS_FMT_PTR_T": ", p);
+            MDKI_PANIC("bad km magic\n");
+        }
         asize = rndup(p->thisblksize, sizeof(MVFS_MAX_ALIGN_T));
         asize += sizeof(MVFS_MAX_ALIGN_T);
         if (*(MVFS_MAX_ALIGN_T *)((caddr_t)p->block + asize -
                                   sizeof(MVFS_MAX_ALIGN_T)) != MVFS_KMEMMAGIC)
         {
-	    MVFS_PRINTF("overrun ptr=%lx kh=%lx: ", p->block, p);
-	    MDKI_PANIC("bad km magic\n");
+            MVFS_PRINTF("overrun ptr=%lx kh=%lx: ", p->block, p);
+            MDKI_PANIC("bad km magic\n");
         }
     }
     SPUNLOCK(mfs_kmlock, s);
@@ -373,8 +373,8 @@ mfs_kzalloc_common(
     size_t asize;
 
     if (mvfs_kmem_init_count == 0) {
-	mvfs_kmem_extra_inits++;
-	mfs_kmem_init();		/* need to do an extra init */
+        mvfs_kmem_extra_inits++;
+        mfs_kmem_init();		/* need to do an extra init */
     }
 
     if (mfs_kmparanoid) mfs_beparanoid();
@@ -385,9 +385,9 @@ mfs_kzalloc_common(
 
     rv = REAL_KMEM_ALLOC(asize, flag);
     if (rv == NULL)
-	return rv;			/* not available. */
+        return rv;			/* not available. */
     p = (struct mfs_kmemhead *) mvfs_slab_getchunk(mvfs_kmemhead_slab,
-						   sizeof(struct mfs_kmemhead));
+                                                   sizeof(struct mfs_kmemhead));
     if (p == NULL) {
         REAL_KMEM_FREE(rv, asize);
         return(p);
@@ -395,10 +395,10 @@ mfs_kzalloc_common(
 
     /* fill it with MVFS_KMEMFILL, then zero any unaligned slop */
     for (i = 0; i < asize; i += sizeof(int)) {
-	*(int *)(rv + i) = MVFS_KMEMFILL;
+        *(int *)(rv + i) = MVFS_KMEMFILL;
     }
     if (i != 0 && i != asize)
-	BZERO(rv + i - sizeof(int), size - i + sizeof(int));
+        BZERO(rv + i - sizeof(int), size - i + sizeof(int));
     *(MVFS_MAX_ALIGN_T*)(rv + asize - sizeof(MVFS_MAX_ALIGN_T)) = MVFS_KMEMMAGIC;
     SPLOCK(mfs_kmlock, s);
     p->magic = MVFS_KMEMMAGIC;
@@ -453,24 +453,24 @@ mfs_kfree(
     /* Quick check for first item on list */
 
     if (mfs_kmalloc->block == ptr) {
-	p = mfs_kmalloc;
-	mfs_kmalloc = p->next;
-	goto checkitout;
+        p = mfs_kmalloc;
+        mfs_kmalloc = p->next;
+        goto checkitout;
     }
 
     /* Scan alloc list for this block */
    
     for (p0 = mfs_kmalloc; p0 != NULL; p0 = p0->next) {
-	p = p0->next;
+        p = p0->next;
         if (p == NULL) break;
-	if (p->block == ptr) {
-	    p0->next = p->next;
-	    goto checkitout;
-	}
+        if (p->block == ptr) {
+            p0->next = p->next;
+            goto checkitout;
+        }
     }
    
     MVFS_PRINTF("mvfs: invalid kmfree ptr = 0x%"KS_FMT_PTR_T" mfs_kmalloc = 0x%"KS_FMT_PTR_T"\n", ptr,
-	   mfs_kmalloc); 
+           mfs_kmalloc); 
     MDKI_PANIC("mvfs: bad kmem_free\n");
 
 checkitout:
@@ -480,21 +480,21 @@ checkitout:
     mfs_kmcount--;
     SPUNLOCK(mfs_kmlock, s);
     if (p == NULL || p->magic != MVFS_KMEMMAGIC) {
-	MVFS_PRINTF("mvfs: invalid kmfree magic number! hdr = 0x%"KS_FMT_PTR_T" ptr = 0x%"KS_FMT_PTR_T"\n",
-	       p, ptr);
-	MDKI_PANIC("mvfs: bad kmem_free");
+        MVFS_PRINTF("mvfs: invalid kmfree magic number! hdr = 0x%"KS_FMT_PTR_T" ptr = 0x%"KS_FMT_PTR_T"\n",
+               p, ptr);
+        MDKI_PANIC("mvfs: bad kmem_free");
     }
     if (p->thisblksize != size) {
-	MVFS_PRINTF("mvfs: invalid kmfree size size=%d, sb, %d\n", size, p->thisblksize);
- 	MDKI_PANIC("mvfs: bad kmem_free");
+        MVFS_PRINTF("mvfs: invalid kmfree size size=%d, sb, %d\n", size, p->thisblksize);
+        MDKI_PANIC("mvfs: bad kmem_free");
     }
     asize = rndup(size, sizeof(MVFS_MAX_ALIGN_T));
     asize += sizeof(MVFS_MAX_ALIGN_T);
     if (*(MVFS_MAX_ALIGN_T *)((caddr_t)ptr + asize -
                               sizeof(MVFS_MAX_ALIGN_T)) != MVFS_KMEMMAGIC)
     {
-	MVFS_PRINTF("mvfs: kmfree of block overrunning its end, ptr=%d size=%ld asize=%ld\n", ptr, size, asize);
- 	MDKI_PANIC("mvfs: bad kmem_free");
+        MVFS_PRINTF("mvfs: kmfree of block overrunning its end, ptr=%d size=%ld asize=%ld\n", ptr, size, asize);
+        MDKI_PANIC("mvfs: bad kmem_free");
     }        
     /* fill freed memory */
     for (i = 0; i < asize / sizeof(u_int); i += sizeof(u_int)) {
@@ -551,9 +551,9 @@ mvfs_ktrace_init(P_NONE)
 
     INITSPLOCK(mvfs_ktrace_splock,"mvfs_ktrace_spl");
     mvfs_kmem_w_array = 
-	KMEM_ALLOC(sizeof(kmem_w_ent_t) * KMEM_TRACE_SIZE, KM_SLEEP);
+        KMEM_ALLOC(sizeof(kmem_w_ent_t) * KMEM_TRACE_SIZE, KM_SLEEP);
     if(mvfs_kmem_w_array == NULL) {
-	MVFS_PRINTF("mvfs_ktrace_init: couldnt allocate array\n");
+        MVFS_PRINTF("mvfs_ktrace_init: couldnt allocate array\n");
         return;
     }
 
@@ -584,15 +584,15 @@ int data2;
 
     if(block != NULL) {
         SPLOCK(mvfs_ktrace_splock, s);
-	for (i=0;i<KMEM_TRACE_SIZE;i++) {
-	    if (mvfs_kmem_w_array[i].block == NULL) {
-	        mvfs_kmem_w_array[i].block = block;
-		mvfs_kmem_w_array[i].size = size;
-		mvfs_kmem_w_array[i].data1 = data1;
+        for (i=0;i<KMEM_TRACE_SIZE;i++) {
+            if (mvfs_kmem_w_array[i].block == NULL) {
+                mvfs_kmem_w_array[i].block = block;
+                mvfs_kmem_w_array[i].size = size;
+                mvfs_kmem_w_array[i].data1 = data1;
                 mvfs_kmem_w_array[i].data2 = data2;
-		break;
-	    }
-	}
+                break;
+            }
+        }
         SPUNLOCK(mvfs_ktrace_splock, s);
     }
     return;
@@ -608,11 +608,11 @@ void *block;
     if (block != NULL) {
         SPLOCK(mvfs_ktrace_splock, s);
         for(i=0;i<KMEM_TRACE_SIZE;i++) {
-	    if(mvfs_kmem_w_array[i].block == block) {
-		mvfs_kmem_w_array[i].block = NULL;
-		break;
-	    }
-	}
+            if(mvfs_kmem_w_array[i].block == block) {
+                mvfs_kmem_w_array[i].block = NULL;
+                break;
+            }
+        }
         SPUNLOCK(mvfs_ktrace_splock, s);
     }
     return;
@@ -693,9 +693,9 @@ mvfs_slab_getchunk(
     MDB_XLOG((MDB_MEMOP,"getchunk slab list %"KS_FMT_PTR_T"\n", slistp));
     SPLOCK(slistp->mvfs_slablock, s);
     ASSERT(slistp->slb_eltpayload_size == size); /* make sure caller wants
-						right size */
+                                                right size */
     while (1) {
-	/* keep going until we get one */
+        /* keep going until we get one */
         if (slistp->slb_tot_freecount == 0) {
             /* There is no free element in any slab. Get a new slab. */
             traced = slistp->slb_traced;
@@ -708,7 +708,7 @@ mvfs_slab_getchunk(
                 return(NULL);
             }
             MDB_XLOG((MDB_MEMOP,"newchunk footer %"KS_FMT_PTR_T" oldfoot %"KS_FMT_PTR_T"\n",
-			    new_slp, slistp->slb_head));
+                            new_slp, slistp->slb_head));
             SPLOCK(slistp->mvfs_slablock, s);
 
             /* While we were waiting for allocation of a new slab,
@@ -794,7 +794,7 @@ mvfs_slab_freechunk(
      * alignment portion in the union
      */
     tp = (mvfs_aligner_t *) (elt -
-	(unsigned long)((caddr_t)&tp->foo.align - (caddr_t)&tp->te_flist));
+        (unsigned long)((caddr_t)&tp->foo.align - (caddr_t)&tp->te_flist));
 
     MDB_XLOG((MDB_MEMOP,"freechunk list %"KS_FMT_PTR_T" elt %"KS_FMT_PTR_T"\n", slistp, elt));
     SPLOCK(slistp->mvfs_slablock, s);
@@ -818,8 +818,8 @@ mvfs_slab_freechunk(
     if (slp->slb_freecount == slp->slb_eltcount &&
         slistp->slb_tot_freecount > slp->slb_freecount)
     {
-	/* A totally free page.  And there is at least another slab in
-	 * the slab list with free elements, so free this totally 
+        /* A totally free page.  And there is at least another slab in
+         * the slab list with free elements, so free this totally 
          * free slab. 
          */
         if (slp->slb_nextslab != NULL)
@@ -923,7 +923,7 @@ mvfs_destroy_slablist(mvfs_slab_list_t *slist)
     FREESPLOCK(slist->mvfs_slablock);
 #ifdef KMEMDEBUG
     if (slist->slb_traced == FALSE)
-	REAL_KMEM_FREE(slist, sizeof(mvfs_slab_list_t));
+        REAL_KMEM_FREE(slist, sizeof(mvfs_slab_list_t));
     else
 #endif
     KMEM_FREE(slist, sizeof(mvfs_slab_list_t));
@@ -952,7 +952,7 @@ mvfs_new_slab_int(
 
 #ifdef KMEMDEBUG
     if (traced == FALSE)
-	slab = REAL_KMEM_ALLOC(MVFS_SLABSIZE, KM_SLEEP);
+        slab = REAL_KMEM_ALLOC(MVFS_SLABSIZE, KM_SLEEP);
     else
 #endif
     slab = KMEM_ALLOC(MVFS_SLABSIZE, KM_SLEEP);
@@ -965,14 +965,14 @@ mvfs_new_slab_int(
     footer->slb_prevslab = NULL;
     footer->slb_baseoffset = (u_short)((caddr_t) footer - slab);
     footer->slb_freecount = footer->slb_eltcount =
-	(MVFS_SLABSIZE - sizeof(*footer)) / size;
+        (MVFS_SLABSIZE - sizeof(*footer)) / size;
 
     flbase = (struct mvfs_slab_freelist *)slab;
     footer->slb_free = flbase;
     for (i = 0; i < footer->slb_eltcount-1; i++) {
-	flbase->fre_page = footer;
-	flbase->fre_next = (struct mvfs_slab_freelist *)((caddr_t)flbase + size);
-	flbase = flbase->fre_next;
+        flbase->fre_page = footer;
+        flbase->fre_next = (struct mvfs_slab_freelist *)((caddr_t)flbase + size);
+        flbase = flbase->fre_next;
     }
     flbase->fre_page = footer;
     flbase->fre_next = NULL;
@@ -997,11 +997,11 @@ mvfs_free_slab(
     freeaddr = ((caddr_t)footer) - footer->slb_baseoffset;
 #ifdef KMEMDEBUG
     if (traced == FALSE)
-	REAL_KMEM_FREE(freeaddr, MVFS_SLABSIZE);
+        REAL_KMEM_FREE(freeaddr, MVFS_SLABSIZE);
     else
 #endif
     KMEM_FREE(freeaddr, MVFS_SLABSIZE);
 }
 
 #endif /* !MVFS_SYSTEM_KMEM */
-static const char vnode_verid_mvfs_kmem_c[] = "$Id:  c210e994.737211e1.90e6.00:01:83:0a:3b:75 $";
+static const char vnode_verid_mvfs_kmem_c[] = "$Id:  969a92fe.48734729.8ec5.88:42:4e:30:7f:9a $";

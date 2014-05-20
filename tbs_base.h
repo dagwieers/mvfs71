@@ -1,4 +1,4 @@
-/* * (C) Copyright IBM Corporation 1990, 2012. */
+/* * (C) Copyright IBM Corporation 1990, 2013. */
 /*
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -85,6 +85,7 @@ typedef char tbs_shell_cmd_t[TBS_MAX_SHELL_CMD_LEN+1];
 #define TBS_MAX_NAME_LEN   	KS_MAX_NAME_LEN
 typedef ks_name_t tbs_name_t;
 #define TBS_MAX_PNAME_LEN	KS_MAX_PNAME_LEN
+#define TBS_MAX_PNAME_FMT KS_MAX_PNAME_FMT
 typedef ks_pname_t tbs_pname_t;
 
 /****************************************************************************
@@ -645,4 +646,4 @@ typedef struct tbs_dirent_s {
 #endif
 
 #endif
-/* $Id: fbcbbf4f.236411e2.8951.00:01:84:c3:8a:52 $ */
+/* $Id: a253436c.7e2711e3.8c85.00:1a:64:79:4b:40 $ */

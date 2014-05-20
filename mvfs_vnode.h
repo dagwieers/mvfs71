@@ -1,7 +1,7 @@
 #ifndef _MVFS_VNODE_H_
 #define _MVFS_VNODE_H_
 /*
- * Copyright (C) 1994, 2012 IBM Corporation.
+ * Copyright (C) 1994, 2013 IBM Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -99,7 +99,7 @@ typedef int (*vfs_statvfs_fn_t)(
 typedef int (*vfs_sync_fn_t)(
     vfs_t *vfsarg,
     short flag,
-    CRED_T *cr
+    CALL_DATA_T *cr
 );
 typedef int (*vfs_mount_fn_t)(
     vfs_t *vfsp,
@@ -108,12 +108,12 @@ typedef int (*vfs_mount_fn_t)(
     int flags,
     caddr_t data,
     size_t datalen,
-    CRED_T *cr,
+    CALL_DATA_T *cr,
     MVFS_CALLER_INFO *ctx
 );
 typedef int (*vfs_unmount_fn_t)(
     vfs_t *vfsp,
-    CRED_T *cr
+    CALL_DATA_T *cr
 );
 typedef int (*vfs_vget_fn_t)(
     vfs_t *vfsp,
@@ -549,4 +549,4 @@ mvop_linux_close(
     file_ctx *ctx
 );
 #endif /* _MVFS_VNODE_H_ */
-/* $Id: 0ed582bf.e6e311e1.8799.00:01:84:c3:8a:52 $ */
+/* $Id: b886acb8.66b64edd.8ce2.7c:77:b2:50:b2:62 $ */
