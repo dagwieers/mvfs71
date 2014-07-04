@@ -2480,4 +2480,4 @@ mvfs_clnt_ping_server(
 		  NULL			/* view vp */
 		 );
 }
-static const char vnode_verid_mvfs_clnt_c[] = "$Id:  47231466.8acb40b8.8ff5.f1:35:8b:ea:66:74 $";
+static const char vnode_verid_mvfs_clnt_c[] = "$Id:  50302a2b.9ff711e3.9005.00:01:83:09:28:25 $";

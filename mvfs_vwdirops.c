@@ -1439,4 +1439,4 @@ mvfs_viewuuidrecover(
     ATRIA_VN_RELE(dvp, cd);
     return error;
 }
-static const char vnode_verid_mvfs_vwdirops_c[] = "$Id:  d823ac4c.f8e84f19.a384.b9:17:1a:94:6c:56 $";
+static const char vnode_verid_mvfs_vwdirops_c[] = "$Id:  50b02a5b.9ff711e3.9005.00:01:83:09:28:25 $";
